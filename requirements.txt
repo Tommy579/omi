@@ -1,0 +1,10 @@
+google-generativeai
+mss
+Pillow
+pystray
+sounddevice
+numpy
+pygetwindow
+pyautogui
+win10toast-persist
+requests
