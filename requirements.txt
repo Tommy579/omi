@@ -1,10 +1,13 @@
-google-generativeai
+google-genai
 mss
 Pillow
-pystray
 sounddevice
 numpy
+openai-whisper
 pygetwindow
 pyautogui
-win10toast-persist
-requests
+pystray
+opencv-python
+psutil
+pyperclip
+pywin32

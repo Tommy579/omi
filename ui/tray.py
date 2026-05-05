@@ -1,258 +1,400 @@
 """
 Interface utilisateur :
 - Icône dans la barre des tâches (system tray)
-- Popup avec suggestions, historique et chat
-- Support du mode Clair/Sombre automatique
+- Popup avec coins arrondis globaux, thème cohérent, chat intégré
 """
 
 import threading
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import scrolledtext
 import pystray
-from PIL import Image, ImageDraw, ImageTk
-import os
-import sys
+from PIL import Image, ImageDraw
 import winreg
-from win10toast_persist import ToastNotifier
 
-toaster = ToastNotifier()
+# ─────────────────────────────────────────────────────────
+# Thème
+# ─────────────────────────────────────────────────────────
 
 def get_windows_theme():
-    """Détecte si Windows est en mode sombre (1) ou clair (0)"""
     try:
-        registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
-        key = winreg.OpenKey(registry, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        reg = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+        key = winreg.OpenKey(reg, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
         value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
         return "light" if value == 1 else "dark"
     except Exception:
-        return "dark"  # Par défaut
+        return "dark"
 
-def create_icon_image():
-    """Génère une icône simple si pas de fichier .ico"""
-    size = 64
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.ellipse([4, 4, 60, 60], fill="#000000")
-    draw.ellipse([16, 16, 48, 48], fill="#ffffff")
-    draw.ellipse([28, 28, 36, 36], fill="#000000")
-    return img
+THEMES = {
+    "dark": {
+        "bg":        "#111111",
+        "surface":   "#1C1C1C",
+        "input_bg":  "#1C1C1C",
+        "border":    "#2A2A2A",
+        "fg":        "#F0F0F0",
+        "fg_sec":    "#888888",
+        "fg_omi":    "#FFFFFF",
+        "accent":    "#FFFFFF",
+        "btn_bg":    "#232323",
+        "btn_hover": "#2E2E2E",
+        "border_line": "#3a3a3a",
+    },
+    "light": {
+        "bg":        "#F5F5F5",
+        "surface":   "#FFFFFF",
+        "input_bg":  "#ECECEC",
+        "border":    "#E0E0E0",
+        "fg":        "#111111",
+        "fg_sec":    "#888888",
+        "fg_omi":    "#111111",
+        "accent":    "#000000",
+        "btn_bg":    "#E8E8E8",
+        "btn_hover": "#DCDCDC",
+        "border_line": "#CCCCCC",
+    },
+}
+
+# Couleur "magique" utilisée comme transparence pour les coins de la fenêtre
+# Doit être une couleur qui n'apparaît nulle part dans l'UI
+CHROMA = "#010203"
+
+
+
+# ─────────────────────────────────────────────────────────
+# Helpers Canvas
+# ─────────────────────────────────────────────────────────
+
+def rounded_rect(canvas, x1, y1, x2, y2, r, **kwargs):
+    pts = [
+        x1+r, y1,  x2-r, y1,
+        x2,   y1,  x2,   y1+r,
+        x2,   y2-r,x2,   y2,
+        x2-r, y2,  x1+r, y2,
+        x1,   y2,  x1,   y2-r,
+        x1,   y1+r,x1,   y1,
+    ]
+    return canvas.create_polygon(pts, smooth=True, **kwargs)
+
+
+# ─────────────────────────────────────────────────────────
+# Popup
+# ─────────────────────────────────────────────────────────
 
 class PopupWindow:
-    """Fenêtre popup moderne avec support thématique"""
-
     def __init__(self, assistant):
         self.assistant = assistant
         self.window = None
-        self.theme = get_windows_theme()
-        self._apply_theme_colors()
-
-    def _apply_theme_colors(self):
-        if self.theme == "light":
-            self.bg_main = "#F3F3F3"   # Gris très clair
-            self.bg_surf = "#FFFFFF"   # Blanc pur
-            self.bg_input = "#EBEBEB"  # Gris léger pour input
-            self.fg_main = "#1A1A1A"   # Presque noir
-            self.fg_sec = "#666666"    # Gris texte
-            self.accent = "#000000"
-        else:
-            self.bg_main = "#0A0A0A"   # Noir profond
-            self.bg_surf = "#1A1A1A"   # Gris sombre
-            self.bg_input = "#262626"  # Gris moyen
-            self.fg_main = "#FFFFFF"   # Blanc
-            self.fg_sec = "#A3A3A3"    # Gris clair
-            self.accent = "#FFFFFF"
+        self.t = THEMES[get_windows_theme()]
+        self.show_transcripts = False
 
     def show(self):
         if self.window and self.window.winfo_exists():
+            self.window.deiconify()
             self.window.lift()
             self.window.focus_force()
             return
-
-        self.theme = get_windows_theme()
-        self._apply_theme_colors()
-        
+        self.t = THEMES[get_windows_theme()]
         self.window = tk.Toplevel()
         self._build_ui()
 
     def _build_ui(self):
+        W, H = 360, 500
+        R = 16          # rayon des coins de la fenêtre
         win = self.window
+        t = self.t
+
         win.title("OMI")
-        win.geometry("420x650")
+        win.geometry(f"{W}x{H}")
         win.resizable(False, False)
+        win.overrideredirect(True)
         win.attributes("-topmost", True)
-        win.configure(bg=self.bg_main)
 
-        # Positionne en bas à droite
-        screen_w = win.winfo_screenwidth()
-        screen_h = win.winfo_screenheight()
-        win.geometry(f"420x650+{screen_w - 440}+{screen_h - 720}")
+        # ── Radius global via transparentcolor ──────────────
+        # Le fond de la fenêtre est CHROMA (couleur invisible)
+        # On dessine un rectangle arrondi par-dessus : les coins restent transparents
+        win.configure(bg=CHROMA)
+        win.attributes("-transparentcolor", CHROMA)
 
-        # ── Header ──────────────────────────────────
-        header = tk.Frame(win, bg=self.bg_main, pady=20)
-        header.pack(fill="x", padx=25)
+        # Position bas-droite
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+        win.geometry(f"{W}x{H}+{sw - W - 16}+{sh - H - 52}")
 
-        tk.Label(
-            header,
-            text="OMI",
-            font=("Segoe UI", 18, "bold"),
-            fg=self.fg_main,
-            bg=self.bg_main,
-        ).pack(side="left")
+        # Canvas principal qui couvre toute la fenêtre
+        root_canvas = tk.Canvas(win, width=W, height=H,
+                                bg=CHROMA, highlightthickness=0, bd=0)
+        root_canvas.place(x=0, y=0)
 
-        self.pause_btn = tk.Button(
-            header,
-            text="⏸ Pause" if not self.assistant.paused else "▶ Reprendre",
-            font=("Segoe UI", 9),
-            fg=self.fg_main,
-            bg=self.bg_surf,
-            activebackground=self.bg_input,
-            activeforeground=self.fg_main,
-            bd=0,
-            padx=15,
-            pady=6,
-            cursor="hand2",
-            command=self._toggle_pause,
-        )
-        self.pause_btn.pack(side="right")
+        # Rectangle arrondi = fond réel de la fenêtre
+        rounded_rect(root_canvas, 0, 0, W, H, R, fill=t["bg"], outline=t["border_line"], width=1.5)
 
-        # ── Suggestion (Card moderne) ────────────────
-        tk.Label(
-            win,
-            text="DERNIÈRE ANALYSE",
-            font=("Segoe UI", 8, "bold"),
-            fg=self.fg_sec,
-            bg=self.bg_main,
-        ).pack(anchor="w", padx=30, pady=(10, 5))
+        # Drag sur le canvas racine
+        root_canvas.bind("<ButtonPress-1>", self._drag_start)
+        root_canvas.bind("<B1-Motion>",     self._drag_move)
 
-        # Simulation d'un container arrondi pour la suggestion
-        suggestion_container = tk.Frame(win, bg=self.bg_surf, padx=2, pady=2)
-        suggestion_container.pack(fill="x", padx=25)
-        
-        self.suggestion_box = tk.Text(
-            suggestion_container,
-            height=4,
-            wrap="word",
-            font=("Segoe UI", 11),
-            bg=self.bg_surf,
-            fg=self.fg_main,
-            bd=0,
-            padx=15,
-            pady=15,
-            state="disabled",
-            highlightthickness=0,
-        )
-        self.suggestion_box.pack(fill="x")
-        self._set_suggestion(self.assistant.get_latest_suggestion())
+        # ── Titlebar — widgets posés directement sur le canvas ──
+        # (pas de Frame intermédiaire pour ne pas boucher les coins arrondis)
 
-        # ── Historique ───────────────────────────────
-        tk.Label(
-            win,
-            text="FLUX D'ACTIVITÉ",
-            font=("Segoe UI", 8, "bold"),
-            fg=self.fg_sec,
-            bg=self.bg_main,
-        ).pack(anchor="w", padx=30, pady=(20, 5))
+        lbl_title = tk.Label(root_canvas, text="OMI", font=("Segoe UI", 11, "bold"),
+                             fg=t["fg"], bg=t["bg"])
+        root_canvas.create_window(16, 22, anchor="w", window=lbl_title)
 
-        self.history_box = scrolledtext.ScrolledText(
-            win,
-            height=7,
-            wrap="word",
-            font=("Segoe UI", 9),
-            bg=self.bg_main,
-            fg=self.fg_sec,
-            bd=0,
-            padx=10,
-            pady=0,
-            state="disabled",
-            highlightthickness=0,
-        )
-        self.history_box.pack(fill="x", padx=25)
-        self._refresh_history()
+        close_btn = tk.Label(root_canvas, text="×", font=("Segoe UI", 15),
+                             fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
+        root_canvas.create_window(W - 14, 22, anchor="e", window=close_btn)
+        close_btn.bind("<Button-1>", lambda e: win.withdraw())
 
-        # ── Chat (Input Moderne) ─────────────────────
-        chat_container = tk.Frame(win, bg=self.bg_input, padx=15, pady=2)
-        chat_container.pack(fill="x", padx=25, pady=(25, 0))
-        
-        self.chat_input = tk.Entry(
-            chat_container,
-            font=("Segoe UI", 11),
-            bg=self.bg_input,
-            fg=self.fg_main,
-            insertbackground=self.fg_main,
-            bd=0,
-            highlightthickness=0,
-        )
-        self.chat_input.pack(fill="x", ipady=12)
-        self.chat_input.bind("<Return>", self._send_chat)
-        self.chat_input.insert(0, "Demande-moi n'importe quoi...")
-        self.chat_input.bind("<FocusIn>", lambda e: self.chat_input.delete(0, "end") if "Demande-moi" in self.chat_input.get() else None)
+        min_btn = tk.Label(root_canvas, text="—", font=("Segoe UI", 11),
+                             fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
+        root_canvas.create_window(W - 38, 22, anchor="e", window=min_btn)
+        min_btn.bind("<Button-1>", lambda e: win.withdraw())
 
-        # Réponse chat
-        self.chat_response = tk.Text(
-            win,
-            height=5,
+        self.trans_btn = tk.Label(root_canvas, text="🎙️", font=("Segoe UI", 10),
+                                    fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
+        root_canvas.create_window(W - 64, 22, anchor="e", window=self.trans_btn)
+        self.trans_btn.bind("<Button-1>", self._toggle_transcripts)
+
+        self.pause_label = tk.Label(root_canvas, text="⏸", font=("Segoe UI", 10),
+                                    fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
+        root_canvas.create_window(W - 90, 22, anchor="e", window=self.pause_label)
+        self.pause_label.bind("<Button-1>", self._toggle_pause)
+
+        analyze_label = tk.Label(root_canvas, text="↺", font=("Segoe UI", 12),
+                                 fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
+        root_canvas.create_window(W - 116, 22, anchor="e", window=analyze_label)
+        analyze_label.bind("<Button-1>", self._force_analyze)
+
+        # ── Zone messages ─────────────────────────────────────
+        PAD = 14
+        MSG_Y = 52
+        MSG_H = H - MSG_Y - 60   # laisse de la place pour l'input en bas
+
+        outer_msg = tk.Canvas(root_canvas, bg=t["bg"], highlightthickness=0, bd=0,
+                              width=W - PAD*2, height=MSG_H)
+        root_canvas.create_window(PAD, MSG_Y, anchor="nw", window=outer_msg)
+        rounded_rect(outer_msg, 0, 0, W - PAD*2, MSG_H, 12, fill=t["surface"], outline="")
+
+        msg_inner = tk.Frame(outer_msg, bg=t["surface"])
+        outer_msg.create_window(8, 8, anchor="nw", window=msg_inner,
+                                width=W - PAD*2 - 16, height=MSG_H - 16)
+
+        self.msg_text = scrolledtext.ScrolledText(
+            msg_inner,
             wrap="word",
             font=("Segoe UI", 10),
-            bg=self.bg_main,
-            fg=self.fg_main,
+            bg=t["surface"],
+            fg=t["fg"],
             bd=0,
-            padx=5,
-            pady=15,
+            highlightthickness=0,
+            padx=4,
+            pady=4,
             state="disabled",
+            cursor="arrow",
         )
-        self.chat_response.pack(fill="x", padx=25)
+        self.msg_text.pack(fill="both", expand=True)
 
-    def _toggle_pause(self):
-        is_paused = self.assistant.toggle_pause()
-        self.pause_btn.config(text="▶ Reprendre" if is_paused else "⏸ Pause")
-        status_text = "Assistant en pause." if is_paused else "Assistant actif."
-        self._set_suggestion(status_text)
+        # Zone de transcription (cachée par défaut)
+        self.trans_text = scrolledtext.ScrolledText(
+            msg_inner,
+            wrap="word",
+            font=("Consolas", 9),
+            bg=t["input_bg"],
+            fg=t["fg_sec"],
+            bd=0,
+            highlightthickness=0,
+            padx=4,
+            pady=4,
+            state="disabled",
+            cursor="arrow",
+        )
+        # On ne la pack pas encore
+
+        self.msg_text.tag_config("sender_omi", foreground=t["fg_sec"],
+                                  font=("Segoe UI", 8, "bold"))
+        self.msg_text.tag_config("text_omi",   foreground=t["fg_omi"],
+                                  font=("Segoe UI", 10))
+        self.msg_text.tag_config("sender_you", foreground=t["fg_sec"],
+                                  font=("Segoe UI", 8, "bold"))
+        self.msg_text.tag_config("text_you",   foreground=t["fg"],
+                                  font=("Segoe UI", 10, "italic"))
+
+        self._load_history()
+
+        # ── Input ─────────────────────────────────────────────
+        INPUT_Y = H - 50
+        INPUT_H = 38
+
+        outer_input = tk.Canvas(root_canvas, bg=t["bg"], highlightthickness=0, bd=0,
+                                width=W - PAD*2, height=INPUT_H)
+        root_canvas.create_window(PAD, INPUT_Y, anchor="nw", window=outer_input)
+        rounded_rect(outer_input, 0, 0, W - PAD*2, INPUT_H, 10,
+                     fill=t["input_bg"], outline="")
+
+        self.input_var = tk.StringVar()
+        entry = tk.Entry(outer_input, textvariable=self.input_var,
+                         font=("Segoe UI", 10),
+                         bg=t["input_bg"], fg=t["fg"],
+                         insertbackground=t["fg"],
+                         bd=0, highlightthickness=0)
+        outer_input.create_window(10, INPUT_H // 2, anchor="w",
+                                  window=entry, width=W - PAD*2 - 44, height=24)
+        entry.bind("<Return>", self._send)
+
+        send_btn = tk.Label(outer_input, text="↑", font=("Segoe UI", 13, "bold"),
+                            fg=t["accent"], bg=t["input_bg"], cursor="hand2")
+        outer_input.create_window(W - PAD*2 - 16, INPUT_H // 2,
+                                  anchor="center", window=send_btn)
+        send_btn.bind("<Button-1>", self._send)
+
+
+    # ── Drag ──────────────────────────────────────────────
+    def _drag_start(self, e):
+        self._dx = e.x_root - self.window.winfo_x()
+        self._dy = e.y_root - self.window.winfo_y()
+
+    def _drag_move(self, e):
+        x = e.x_root - self._dx
+        y = e.y_root - self._dy
+        self.window.geometry(f"+{x}+{y}")
+
+    # ── Messages ──────────────────────────────────────────
+    def _append(self, sender, text, sender_tag, text_tag):
+        t = self.msg_text
+        t.config(state="normal")
+        t.insert("end", f"\n{sender}\n", sender_tag)
+        t.insert("end", f"{text}\n", text_tag)
+        t.config(state="disabled")
+        t.see("end")
+
+    def _load_history(self):
+        memory = self.assistant.get_memory()
+        if not memory:
+            self.msg_text.config(state="normal")
+            self.msg_text.insert("end", "\nEn attente d'activité...\n", "sender_omi")
+            self.msg_text.config(state="disabled")
+            return
+        for item in memory:
+            label = "📷 ÉCRAN" if item["type"] == "screen" else "🎤 AUDIO"
+            self._append(label, item["content"], "sender_omi", "text_omi")
 
     def _set_suggestion(self, text):
-        self.suggestion_box.config(state="normal")
-        self.suggestion_box.delete("1.0", "end")
-        self.suggestion_box.insert("end", text)
-        self.suggestion_box.config(state="disabled")
+        if self.window and self.window.winfo_exists():
+            label = "🎤 AUDIO" if text.startswith("🎤") else "📷 ÉCRAN"
+            self._append(label, text.lstrip("🎤 "), "sender_omi", "text_omi")
 
-    def _refresh_history(self):
-        memory = self.assistant.get_memory()
-        self.history_box.config(state="normal")
-        self.history_box.delete("1.0", "end")
-        if not memory:
-            self.history_box.insert("end", "Aucun historique.")
-        else:
-            for item in reversed(memory[-10:]):
-                icon = "●"
-                time_str = item['time']
-                content = item['content']
-                self.history_box.insert("end", f"{icon} {time_str} ", "time")
-                self.history_box.insert("end", f"{content}\n\n")
-        self.history_box.tag_config("time", foreground=self.accent)
-        self.history_box.config(state="disabled")
-
-    def _send_chat(self, event=None):
-        msg = self.chat_input.get().strip()
-        if not msg or "Demande-moi" in msg:
+    def _send(self, event=None):
+        msg = self.input_var.get().strip()
+        if not msg:
             return
-        self.chat_input.delete(0, "end")
-        self._set_chat_response("OMI réfléchit...")
+        self.input_var.set("")
+        self._append("VOUS", msg, "sender_you", "text_you")
+        self._last_status = "Réflexion en cours..."
+        self._append("OMI", self._last_status, "sender_omi", "text_omi")
         threading.Thread(target=self._do_chat, args=(msg,), daemon=True).start()
 
     def _do_chat(self, msg):
-        response = self.assistant.chat(msg)
+        response = self.assistant.chat(msg, status_callback=self._update_chat_status)
         if self.window and self.window.winfo_exists():
-            self.window.after(0, lambda: self._set_chat_response(response))
+            self.window.after(0, lambda: self._replace_last(response))
 
-    def _set_chat_response(self, text):
-        self.chat_response.config(state="normal")
-        self.chat_response.delete("1.0", "end")
-        self.chat_response.insert("end", text)
-        self.chat_response.config(state="disabled")
+    def _update_chat_status(self, status):
+        if self.window and self.window.winfo_exists():
+            self.window.after(0, lambda: self._do_update_status(status))
+
+    def _do_update_status(self, new_status):
+        t = self.msg_text
+        t.config(state="normal")
+        idx = t.search(self._last_status, "1.0", backwards=True, stopindex="end")
+        if idx:
+            end_idx = t.index(f"{idx} lineend")
+            t.delete(idx, end_idx)
+            t.insert(idx, new_status)
+            self._last_status = new_status
+        t.config(state="disabled")
+        t.see("end")
+
+    def _replace_last(self, text):
+        t = self.msg_text
+        t.config(state="normal")
+        idx = t.search(self._last_status, "1.0", backwards=True, stopindex="end")
+        if idx:
+            end_idx = t.index(f"{idx} lineend")
+            t.delete(idx, end_idx)
+            t.insert(idx, text)
+        else:
+            self._append("OMI", text, "sender_omi", "text_omi")
+        t.config(state="disabled")
+        t.see("end")
+
+    def _toggle_transcripts(self, event=None):
+        self.show_transcripts = not self.show_transcripts
+        if self.show_transcripts:
+            self.msg_text.pack_forget()
+            self.trans_text.pack(fill="both", expand=True)
+            self.trans_btn.config(fg=self.t["accent"])
+            # Charger les dernières transcriptions
+            from core.database import query_transcripts
+            recent = query_transcripts(limit=20)
+            self.trans_text.config(state="normal")
+            self.trans_text.delete("1.0", "end")
+            for r in reversed(recent):
+                self.trans_text.insert("end", f"[{r[0][-8:]}] {r[1]}: {r[2]}\n")
+            self.trans_text.config(state="disabled")
+            self.trans_text.see("end")
+        else:
+            self.trans_text.pack_forget()
+            self.msg_text.pack(fill="both", expand=True)
+            self.trans_btn.config(fg=self.t["fg_sec"])
+
+    def _add_transcript_to_ui(self, text):
+        if self.window and self.window.winfo_exists():
+            t = self.trans_text
+            t.config(state="normal")
+            from datetime import datetime
+            now = datetime.now().strftime("%H:%M:%S")
+            t.insert("end", f"[{now}] User: {text}\n")
+            t.config(state="disabled")
+            if self.show_transcripts:
+                t.see("end")
+
+    def _toggle_pause(self, event=None):
+        is_paused = self.assistant.toggle_pause()
+        self.pause_label.config(text="▶" if is_paused else "⏸")
+        self._append("SYSTÈME",
+                     "Analyse en pause." if is_paused else "Analyse reprend.",
+                     "sender_omi", "text_omi")
+
+    def _force_analyze(self, event=None):
+        self._append("SYSTÈME", "Analyse en cours...", "sender_omi", "text_omi")
+        threading.Thread(target=self._do_force_analyze, daemon=True).start()
+
+    def _do_force_analyze(self):
+        try:
+            img = self.assistant._capture_screen()
+            self.assistant._analyze_screen(img)
+        except Exception as e:
+            if self.window and self.window.winfo_exists():
+                self.window.after(0, lambda: self._append("ERREUR", str(e),
+                                                          "sender_omi", "text_omi"))
+
+    def _refresh_history(self): pass
+    def _set_chat_response(self, text): pass
+
+
+# ─────────────────────────────────────────────────────────
+# Tray
+# ─────────────────────────────────────────────────────────
+
+def create_icon_image():
+    size = 64
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.ellipse([4, 4, 60, 60], fill="#111111")
+    draw.ellipse([20, 20, 44, 44], fill="#FFFFFF")
+    draw.ellipse([28, 28, 36, 36], fill="#111111")
+    return img
 
 
 class TrayApp:
-    """Icône dans la barre des tâches Windows"""
-
     def __init__(self, assistant):
         self.assistant = assistant
         self.popup = None
@@ -265,17 +407,16 @@ class TrayApp:
 
         self.popup = PopupWindow(self.assistant)
         self.assistant.on_suggestion_callback = self._on_new_suggestion
+        self.assistant.on_transcript_callback = self._on_new_transcript
 
         icon_img = create_icon_image()
         menu = pystray.Menu(
             pystray.MenuItem("Ouvrir", self._open_popup, default=True),
             pystray.MenuItem("Quitter", self._quit),
         )
-        self.icon = pystray.Icon("OmiAssistant", icon_img, "Omi Assistant", menu=menu)
+        self.icon = pystray.Icon("OmiAssistant", icon_img, "Omi", menu=menu)
 
-        tray_thread = threading.Thread(target=self.icon.run, daemon=True)
-        tray_thread.start()
-
+        threading.Thread(target=self.icon.run, daemon=True).start()
         self._root.mainloop()
 
     def _open_popup(self, icon=None, item=None):
@@ -284,12 +425,10 @@ class TrayApp:
     def _on_new_suggestion(self, text):
         if self.popup and self.popup.window and self.popup.window.winfo_exists():
             self._root.after(0, lambda: self.popup._set_suggestion(text))
-            self._root.after(0, self.popup._refresh_history)
-        else:
-            if not text.startswith("Erreur") and not text.startswith("Rien de particulier"):
-                try:
-                    toaster.show_toast("OMI", text, duration=5, threaded=True)
-                except: pass
+
+    def _on_new_transcript(self, text):
+        if self.popup and self.popup.window and self.popup.window.winfo_exists():
+            self._root.after(0, lambda: self.popup._add_transcript_to_ui(text))
 
     def _quit(self, icon, item):
         self.assistant.stop()

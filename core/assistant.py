@@ -8,8 +8,9 @@ import threading
 from datetime import datetime
 from collections import deque
 import os
+import cv2
 
-import google.generativeai as genai
+from google import genai
 import mss
 from PIL import Image
 
@@ -17,6 +18,8 @@ from config import (
     GEMINI_API_KEY,
     GEMINI_MODEL,
     SCREEN_CAPTURE_INTERVAL,
+    ENABLE_CAMERA,
+    CAMERA_CAPTURE_INTERVAL,
     SYSTEM_PROMPT,
     MAX_MEMORY_ITEMS,
     ENABLE_MICROPHONE,
@@ -24,38 +27,51 @@ from config import (
 )
 
 from core.tools import TOOLS_LIST
+from core.database import add_transcript, query_transcripts
 
 
 class Assistant:
     def __init__(self):
-        genai.configure(api_key=GEMINI_API_KEY)
+        self.client = genai.Client(api_key=GEMINI_API_KEY)
         
         # On définit un prompt système plus complet pour le côté agent
         enhanced_prompt = SYSTEM_PROMPT + """
         
-Tu as accès à des outils pour interagir avec l'ordinateur de l'utilisateur.
-- Tu peux lister des dossiers, lire des fichiers, et chercher des fichiers sur TOUT le disque.
-- Tu peux voir des images spécifiques avec inspect_image.
-- Tu peux obtenir des infos sur les fenêtres actives.
-- Tu peux exécuter des commandes via execute_command.
+TU AS UN ACCÈS INTÉGRAL À CET ORDINATEUR ET TU ES UN AGENT AUTONOME.
+Ton but est d'exécuter les demandes de l'utilisateur de manière RAPIDE et INVISIBLE.
 
-Lorsqu'on te montre l'écran, analyse ce qui est affiché. Si l'utilisateur pose une question sur un fichier ou une application, utilise tes outils pour explorer et répondre précisément.
-Si tu vois une image intéressante ou un document, n'hésite pas à proposer de l'analyser plus en détail.
-Ton but est d'être aussi utile qu'un agent CLI mais avec une vision globale de l'OS.
+### Stratégie de Rapidité (Priorité 1) :
+- **Ne pas utiliser la Vision par défaut** : L'analyse d'image est lente. Utilise `get_ui_tree()` pour lire instantanément le texte et les boutons.
+- **Recherche de fichiers** : Utilise `search_files(query)` qui est instantané grâce à l'index Windows. Ne parcours pas le disque manuellement.
+- **Actions d'Arrière-plan** : Utilise `background_interact` pour cliquer ou taper sans bouger la souris physique.
+- **iTunes** : Utilise TOUJOURS `control_itunes(command)` pour la musique.
+
+### Capacités OS Avancées :
+- **Monitoring** : Utilise `get_system_stats()` pour diagnostiquer des lenteurs (CPU/RAM) et `get_windows_event_logs()` pour les erreurs système.
+- **Processus** : Utilise `list_processes()` pour voir ce qui tourne et `get_process_details(pid)` pour analyser un process suspect (fichiers ouverts, réseau). Tu peux `kill_process(pid)` si nécessaire.
+- **Fichiers** : Tu peux `read_file` ET `write_file`. Tu es capable de corriger du code ou de créer des scripts.
+- **Presse-papier** : Utilise `get_clipboard()` pour voir ce que l'utilisateur a copié.
+- **Notifications** : Utilise `send_notification(title, message)` pour informer l'utilisateur de tes actions ou de problèmes détectés.
+
+### Fallback :
+- Si l'arrière-plan échoue, utilise alors la Vision (`[UPDATE_SCREEN]`) et `mouse_click` en dernier recours.
+
+Tu es invisible, rapide, et efficace.
 """
         
-        self.model = genai.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            system_instruction=enhanced_prompt,
-            tools=TOOLS_LIST
+        self.chat_session = self.client.chats.create(
+            model=GEMINI_MODEL,
+            config={"system_instruction": enhanced_prompt, "tools": TOOLS_LIST}
+            
         )
         # On utilise une session de chat pour le function calling automatique et le maintien du contexte
-        self.chat_session = self.model.start_chat(enable_automatic_function_calling=True)
+        # removed
         self.memory = deque(maxlen=MAX_MEMORY_ITEMS)
         self.latest_suggestion = "Démarrage en cours..."
         self.is_running = False
         self.paused = False
         self.on_suggestion_callback = None
+        self.on_transcript_callback = None
         self._lock = threading.Lock()
 
     # ─────────────────────────────────────────────
@@ -64,7 +80,7 @@ Ton but est d'être aussi utile qu'un agent CLI mais avec une vision globale de 
 
     def start(self):
         self.is_running = True
-        threading.Thread(target=self._screen_loop, daemon=True).start()
+        threading.Thread(target=self._vision_loop, daemon=True).start()
         if ENABLE_MICROPHONE:
             try:
                 threading.Thread(target=self._mic_loop, daemon=True).start()
@@ -81,17 +97,28 @@ Ton but est d'être aussi utile qu'un agent CLI mais avec une vision globale de 
         return self.paused
 
     # ─────────────────────────────────────────────
-    # Capture d'écran et Analyse
+    # Capture Vision (Écran + Caméra) et Analyse
     # ─────────────────────────────────────────────
 
-    def _screen_loop(self):
+    def _vision_loop(self):
         while self.is_running:
             try:
                 if not self.paused:
-                    img = self._capture_screen()
-                    self._analyze_screen(img)
+                    images = []
+                    
+                    # Capture de l'écran
+                    screen_img = self._capture_screen()
+                    images.append(screen_img)
+                    
+                    # Capture de la caméra si activée
+                    if ENABLE_CAMERA:
+                        camera_img = self._capture_camera()
+                        if camera_img:
+                            images.append(camera_img)
+                    
+                    self._analyze_vision(images)
             except Exception as e:
-                print(f"[Écran] Erreur : {e}")
+                print(f"[Vision] Erreur : {e}")
             time.sleep(SCREEN_CAPTURE_INTERVAL)
 
     def _capture_screen(self):
@@ -103,15 +130,39 @@ Ton but est d'être aussi utile qu'un agent CLI mais avec une vision globale de 
         img.thumbnail((1280, 720), Image.LANCZOS)
         return img
 
-    def _analyze_screen(self, img):
-        """Envoie l'image PIL à Gemini via la session de chat"""
-        # Note: on utilise send_message pour garder le contexte des tours précédents
-        # et permettre l'usage d'outils de manière autonome.
-        prompt = "Voici mon écran actuel. Analyse-le et suggère quelque chose d'utile si pertinent."
+    def _capture_camera(self):
+        """Capture une image depuis la webcam"""
+        try:
+            cap = cv2.VideoCapture(0)
+            if not cap.isOpened():
+                return None
+            ret, frame = cap.read()
+            cap.release()
+            if not ret:
+                return None
+            
+            # Convertir BGR en RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame_rgb)
+            img.thumbnail((640, 480), Image.LANCZOS)
+            return img
+        except Exception as e:
+            print(f"[Caméra] Erreur de capture : {e}")
+            return None
+
+    def _analyze_vision(self, images):
+        """Envoie les images (écran + caméra) à Gemini via la session de chat"""
+        prompt = "Voici mon écran actuel"
+        if len(images) > 1:
+            prompt += " et une vue de ma caméra."
+        else:
+            prompt += "."
+        
+        prompt += " Analyse la situation. Si tu remarques des mauvaises habitudes (se ronger les ongles, posture, distraction téléphone) ou une perte de concentration sur l'écran, fais une suggestion courte pour m'aider."
 
         try:
-            # On envoie l'image dans la session
-            response = self.chat_session.send_message([prompt, img])
+            # On envoie les images dans la session
+            response = self.chat_session.send_message([prompt] + images)
             suggestion = response.text.strip()
             
             # Filtre pour éviter les suggestions inutiles
@@ -120,9 +171,9 @@ Ton but est d'être aussi utile qu'un agent CLI mais avec une vision globale de 
 
         except Exception as e:
             suggestion = f"Erreur API : {e}"
-            print(f"[Gemini] Erreur : {e}")
+            print(f"[Gemini Vision] Erreur : {e}")
         
-        self._add_to_memory("screen", suggestion)
+        self._add_to_memory("vision", suggestion)
         self._update_suggestion(suggestion)
 
     # ─────────────────────────────────────────────
@@ -131,6 +182,7 @@ Ton but est d'être aussi utile qu'un agent CLI mais avec une vision globale de 
 
     def _mic_loop(self):
         import sounddevice as sd
+        import numpy as np
         try:
             import whisper
             model = whisper.load_model("tiny")
@@ -143,37 +195,62 @@ Ton but est d'être aussi utile qu'un agent CLI mais avec une vision globale de 
         # Tentative de trouver un périphérique de loopback pour capturer le son système
         devices = sd.query_devices()
         loopback_idx = None
-        keywords = ["mixage", "stereo mix", "loopback", "what u hear", "voicemeeter output"]
+        keywords = ["mixage", "stereo mix", "loopback", "what u hear", "voicemeeter output", "cable output"]
+        print("[Audio] Dispositifs audio disponibles:")
         for i, dev in enumerate(devices):
-            if any(k in dev['name'].lower() for k in keywords) and dev['max_input_channels'] > 0:
-                loopback_idx = i
-                print(f"[Audio] Périphérique système détecté : {dev['name']}")
-                break
+            try:
+                # On affiche seulement les périphériques d'entrée
+                if dev['max_input_channels'] > 0:
+                    print(f"  {i}: {dev['name']} (Input Channels: {dev['max_input_channels']})")
+                    if loopback_idx is None and any(k in dev['name'].lower() for k in keywords):
+                        loopback_idx = i
+                        print(f"[Audio] Périphérique système détecté : {dev['name']}")
+            except:
+                pass
 
         while self.is_running:
             try:
-                if self.paused:
-                    time.sleep(2)
-                    continue
-                
-                # Capture combinée ou alternée ? 
-                # Pour simplifier on capture le loopback si trouvé, sinon le micro par défaut
-                device = loopback_idx if loopback_idx is not None else None
-                
+                # On écoute TOUT LE TEMPS, même en pause (mais on n'analyse pas si en pause)
+                device = loopback_idx
+                # Récupère les infos du device pour adapter les paramètres
+                try:
+                    dev_info = sd.query_devices(device, 'input')
+                    channels = min(dev_info['max_input_channels'], 1)
+                    if "mix" in dev_info['name'].lower() or "stéréo" in dev_info['name'].lower():
+                        channels = min(dev_info['max_input_channels'], 2)
+                except:
+                    channels = 1
+                    device = None
+
                 audio = sd.rec(
                     int(AUDIO_SEGMENT_DURATION * sample_rate),
                     samplerate=sample_rate,
-                    channels=1,
+                    channels=channels,
                     dtype="float32",
                     device=device
                 )
                 sd.wait()
-                result = model.transcribe(audio.flatten(), language="fr", fp16=False)
+                
+                audio_data = audio.flatten()
+                if channels > 1:
+                    audio_data = audio.reshape(-1, channels).mean(axis=1)
+
+                result = model.transcribe(audio_data, language="fr", fp16=False)
                 text = result["text"].strip()
-                if len(text) > 15:
-                    self._analyze_audio(text)
+                
+                if len(text) > 10:
+                    # On stocke TOUJOURS dans la database
+                    add_transcript("User", text)
+                    if self.on_transcript_callback:
+                        self.on_transcript_callback(text)
+                    
+                    # On n'analyse pour les suggestions que si non en pause
+                    if not self.paused and len(text) > 15:
+                        self._analyze_audio(text)
             except Exception as e:
                 print(f"[Micro] Erreur : {e}")
+                if loopback_idx is not None:
+                    loopback_idx = None
                 time.sleep(5)
 
     def _analyze_audio(self, transcript):
@@ -181,6 +258,7 @@ Ton but est d'être aussi utile qu'un agent CLI mais avec une vision globale de 
         try:
             response = self.chat_session.send_message(prompt)
             suggestion = response.text.strip()
+            add_transcript("System", f"Suggestion: {suggestion}")
             self._add_to_memory("audio", suggestion)
             self._update_suggestion(f"🎤 {suggestion}")
         except Exception as e:
@@ -190,10 +268,36 @@ Ton but est d'être aussi utile qu'un agent CLI mais avec une vision globale de 
     # Chat interactif (depuis le popup)
     # ─────────────────────────────────────────────
 
-    def chat(self, user_message: str) -> str:
+    def chat(self, user_message: str, is_system: bool = False, status_callback=None) -> str:
         try:
-            response = self.chat_session.send_message(user_message)
-            return response.text.strip()
+            if status_callback: status_callback("Capture de l'écran...")
+            
+            if not is_system:
+                recent = query_transcripts(limit=5)
+                context = "\n".join([f"[{r[0]}] {r[1]}: {r[2]}" for r in reversed(recent)])
+                full_prompt = f"Historique récent des transcriptions :\n{context}\n\nUtilisateur : {user_message}"
+            else:
+                full_prompt = f"Système : {user_message}"
+            
+            # Prendre un screenshot actuel
+            screen_img = self._capture_screen()
+            
+            if status_callback: status_callback("Analyse Gemini en cours...")
+            response = self.chat_session.send_message([full_prompt, screen_img])
+            text_response = response.text.strip()
+            
+            if "[UPDATE_SCREEN]" in text_response:
+                clean_text = text_response.replace("[UPDATE_SCREEN]", "").strip()
+                if clean_text and self.on_suggestion_callback:
+                    # Permet d'afficher à l'utilisateur l'étape en cours
+                    self._update_suggestion(f"⚙️ {clean_text}")
+                
+                # Boucle automatique pour donner le nouvel écran à l'agent
+                if status_callback: status_callback(f"Action : {clean_text}...")
+                next_step = self.chat("Voici l'écran mis à jour. Continue ton action.", is_system=True, status_callback=status_callback)
+                return f"{clean_text}\n{next_step}".strip()
+                
+            return text_response
         except Exception as e:
             return f"Erreur API : {e}"
 

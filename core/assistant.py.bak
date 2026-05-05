@@ -1,0 +1,224 @@
+"""
+Assistant principal - OMI (Open Mind Interface)
+Orchestre la capture d'écran, le micro, et les appels à l'API Gemini (gratuit)
+"""
+
+import time
+import threading
+from datetime import datetime
+from collections import deque
+import os
+
+import google.generativeai as genai
+import mss
+from PIL import Image
+
+from config import (
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    SCREEN_CAPTURE_INTERVAL,
+    SYSTEM_PROMPT,
+    MAX_MEMORY_ITEMS,
+    ENABLE_MICROPHONE,
+    AUDIO_SEGMENT_DURATION,
+)
+
+from core.tools import TOOLS_LIST
+
+
+class Assistant:
+    def __init__(self):
+        genai.configure(api_key=GEMINI_API_KEY)
+        
+        # On définit un prompt système plus complet pour le côté agent
+        enhanced_prompt = SYSTEM_PROMPT + """
+        
+Tu as accès à des outils pour interagir avec l'ordinateur de l'utilisateur.
+- Tu peux lister des dossiers, lire des fichiers, et chercher des fichiers sur TOUT le disque.
+- Tu peux voir des images spécifiques avec inspect_image.
+- Tu peux obtenir des infos sur les fenêtres actives.
+- Tu peux exécuter des commandes via execute_command.
+
+Lorsqu'on te montre l'écran, analyse ce qui est affiché. Si l'utilisateur pose une question sur un fichier ou une application, utilise tes outils pour explorer et répondre précisément.
+Si tu vois une image intéressante ou un document, n'hésite pas à proposer de l'analyser plus en détail.
+Tu peux modifier les fichiers que tu vois à l'écran, en allant les chercher dans le disque, tu as accès à l'entièreté du projet, mais demande quand même une confirmation avant d'apporter de gros changements.
+N'analyse pas ta propre fenêtre, nommée "OMI" dans une petite partie de l'écran.
+Ton but est d'être aussi utile qu'un agent CLI mais avec une vision globale de l'OS.
+"""
+        
+        self.model = genai.GenerativeModel(
+            model_name=GEMINI_MODEL,
+            system_instruction=enhanced_prompt,
+            tools=TOOLS_LIST
+        )
+        # On utilise une session de chat pour le function calling automatique et le maintien du contexte
+        self.chat_session = self.model.start_chat(enable_automatic_function_calling=True)
+        self.memory = deque(maxlen=MAX_MEMORY_ITEMS)
+        self.latest_suggestion = "Démarrage en cours..."
+        self.is_running = False
+        self.paused = False
+        self.on_suggestion_callback = None
+        self._lock = threading.Lock()
+
+    # ─────────────────────────────────────────────
+    # Contrôles
+    # ─────────────────────────────────────────────
+
+    def start(self):
+        self.is_running = True
+        threading.Thread(target=self._screen_loop, daemon=True).start()
+        if ENABLE_MICROPHONE:
+            try:
+                threading.Thread(target=self._mic_loop, daemon=True).start()
+            except Exception as e:
+                print(f"[Micro] Désactivé : {e}")
+
+    def stop(self):
+        self.is_running = False
+
+    def toggle_pause(self):
+        self.paused = not self.paused
+        status = "en pause" if self.paused else "actif"
+        print(f"[Assistant] État : {status}")
+        return self.paused
+
+    # ─────────────────────────────────────────────
+    # Capture d'écran et Analyse
+    # ─────────────────────────────────────────────
+
+    def _screen_loop(self):
+        while self.is_running:
+            try:
+                if not self.paused:
+                    img = self._capture_screen()
+                    self._analyze_screen(img)
+            except Exception as e:
+                print(f"[Écran] Erreur : {e}")
+            time.sleep(SCREEN_CAPTURE_INTERVAL)
+
+    def _capture_screen(self):
+        """Capture l'écran principal et retourne un objet PIL Image redimensionné"""
+        with mss.mss() as sct:
+            monitor = sct.monitors[1]
+            screenshot = sct.grab(monitor)
+        img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
+        img.thumbnail((1280, 720), Image.LANCZOS)
+        return img
+
+    def _analyze_screen(self, img):
+        """Envoie l'image PIL à Gemini via la session de chat"""
+        # Note: on utilise send_message pour garder le contexte des tours précédents
+        # et permettre l'usage d'outils de manière autonome.
+        prompt = "Voici mon écran actuel. Analyse-le et suggère quelque chose d'utile si pertinent."
+
+        try:
+            # On envoie l'image dans la session
+            response = self.chat_session.send_message([prompt, img])
+            suggestion = response.text.strip()
+            
+            # Filtre pour éviter les suggestions inutiles
+            if "Rien de particulier" in suggestion or len(suggestion) < 5:
+                return
+
+        except Exception as e:
+            suggestion = f"Erreur API : {e}"
+            print(f"[Gemini] Erreur : {e}")
+        
+        self._add_to_memory("screen", suggestion)
+        self._update_suggestion(suggestion)
+
+    # ─────────────────────────────────────────────
+    # Microphone
+    # ─────────────────────────────────────────────
+
+    def _mic_loop(self):
+        import sounddevice as sd
+        try:
+            import whisper
+            model = whisper.load_model("tiny")
+        except ImportError:
+            print("[Micro] whisper non installé, micro désactivé")
+            return
+
+        sample_rate = 16000
+        
+        # Tentative de trouver un périphérique de loopback pour capturer le son système
+        devices = sd.query_devices()
+        loopback_idx = None
+        keywords = ["mixage", "stereo mix", "loopback", "what u hear", "voicemeeter output"]
+        for i, dev in enumerate(devices):
+            if any(k in dev['name'].lower() for k in keywords) and dev['max_input_channels'] > 0:
+                loopback_idx = i
+                print(f"[Audio] Périphérique système détecté : {dev['name']}")
+                break
+
+        while self.is_running:
+            try:
+                if self.paused:
+                    time.sleep(2)
+                    continue
+                
+                # Capture combinée ou alternée ? 
+                # Pour simplifier on capture le loopback si trouvé, sinon le micro par défaut
+                device = loopback_idx if loopback_idx is not None else None
+                
+                audio = sd.rec(
+                    int(AUDIO_SEGMENT_DURATION * sample_rate),
+                    samplerate=sample_rate,
+                    channels=1,
+                    dtype="float32",
+                    device=device
+                )
+                sd.wait()
+                result = model.transcribe(audio.flatten(), language="fr", fp16=False)
+                text = result["text"].strip()
+                if len(text) > 15:
+                    self._analyze_audio(text)
+            except Exception as e:
+                print(f"[Micro] Erreur : {e}")
+                time.sleep(5)
+
+    def _analyze_audio(self, transcript):
+        prompt = f'J\'ai entendu ceci : "{transcript}". Réagis si c\'est important ou utile.'
+        try:
+            response = self.chat_session.send_message(prompt)
+            suggestion = response.text.strip()
+            self._add_to_memory("audio", suggestion)
+            self._update_suggestion(f"🎤 {suggestion}")
+        except Exception as e:
+            print(f"[Gemini Audio] Erreur : {e}")
+
+    # ─────────────────────────────────────────────
+    # Chat interactif (depuis le popup)
+    # ─────────────────────────────────────────────
+
+    def chat(self, user_message: str) -> str:
+        try:
+            response = self.chat_session.send_message(user_message)
+            return response.text.strip()
+        except Exception as e:
+            return f"Erreur API : {e}"
+
+    # ─────────────────────────────────────────────
+    # Mémoire et contexte
+    # ─────────────────────────────────────────────
+
+    def _add_to_memory(self, source_type: str, content: str):
+        with self._lock:
+            self.memory.append({
+                "type": source_type,
+                "content": content,
+                "time": datetime.now().strftime("%H:%M"),
+            })
+
+    def _update_suggestion(self, text: str):
+        with self._lock:
+            self.latest_suggestion = text
+        if self.on_suggestion_callback:
+            self.on_suggestion_callback(text)
+
+    def get_latest_suggestion(self) -> str:
+        return self.latest_suggestion
+
+    def get_memory(self) -> list:
+        return list(self.memory)

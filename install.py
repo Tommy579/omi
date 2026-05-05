@@ -56,7 +56,7 @@ def install_dependencies():
 
 
 def setup_api_key():
-    step("🔑 Configuration de la clé API Claude")
+    step("🔑 Configuration de la clé API Gemini")
     print("  1. Va sur https://aistudio.google.com/apikey")
     print("  2. Créé un compte gratuit")
     print("  3. Dans 'API Keys', génère une clé")

@@ -45,7 +45,7 @@ Ouvre `config.py` pour modifier :
 
 ## Dépendances
 
-- `genai` — API Gemini
+- `google-generativeai` — API Gemini
 - `mss` — capture d'écran
 - `Pillow` — traitement image
 - `pystray` — icône système
