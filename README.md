@@ -1,4 +1,3 @@
-cat > /home/claude/README.md << 'EOF'
 # OMI — Assistant IA Personnel pour Windows
 
 OMI est un assistant IA qui tourne en arrière-plan dans ta barre des tâches. Il observe ton écran, écoute via le micro, accède à ton système de fichiers et peut interagir avec ton OS — le tout propulsé par Gemini.
