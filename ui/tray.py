@@ -2,6 +2,7 @@
 Interface utilisateur :
 - Icône dans la barre des tâches (system tray)
 - Popup avec coins arrondis globaux, thème cohérent, chat intégré
+- Filigrane (watermark) transparent pour le dernier message lors de la réduction
 """
 
 import threading
@@ -76,25 +77,131 @@ def rounded_rect(canvas, x1, y1, x2, y2, r, **kwargs):
 
 
 # ─────────────────────────────────────────────────────────
+# Filigrane (Watermark)
+# ─────────────────────────────────────────────────────────
+
+class OverlayWindow:
+    def __init__(self, root):
+        self.root = root
+        self.window = None
+        self.text = ""
+
+    def update_text(self, text):
+        self.text = text
+        if self.window and self.window.winfo_exists() and self.window.winfo_viewable():
+            self._draw()
+
+    def show(self, text=None):
+        if text:
+            self.text = text
+        if not self.text:
+            return
+            
+        if self.window and self.window.winfo_exists():
+            self.window.deiconify()
+            self.window.lift()
+            self._draw()
+        else:
+            self.window = tk.Toplevel(self.root)
+            self.window.overrideredirect(True)
+            self.window.attributes("-topmost", True)
+            self.window.attributes("-transparentcolor", CHROMA)
+            self.window.config(bg=CHROMA)
+            # Désactiver le focus pour que ce soit vraiment un filigrane
+            self.window.attributes("-disabled", True)
+            self._draw()
+
+    def _draw(self):
+        for widget in self.window.winfo_children():
+            widget.destroy()
+            
+        # Style "Activate Windows" : Gris semi-transparent, Segoe UI
+        # Limité à environ 3-4 cm (300px) et 3 lignes
+        display_text = self.text
+        
+        lbl = tk.Label(self.window, text=display_text, font=("Segoe UI", 11),
+                       fg="#888888", bg=CHROMA, justify="right", anchor="e",
+                       wraplength=280) # wraplength limite la largeur du texte
+        lbl.pack(padx=10, pady=10)
+        
+        self.window.update_idletasks()
+        
+        # On force la hauteur pour max 3 lignes (environ 100px)
+        w = 300
+        h = 100
+        sw = self.window.winfo_screenwidth()
+        sh = self.window.winfo_screenheight()
+        
+        # Position en bas à droite, au-dessus de la barre des tâches
+        self.window.geometry(f"{w}x{h}+{sw - w - 10}+{sh - h - 50}")
+
+    def hide(self):
+        if self.window and self.window.winfo_exists():
+            self.window.withdraw()
+
+
+# ─────────────────────────────────────────────────────────
 # Popup
 # ─────────────────────────────────────────────────────────
 
 class PopupWindow:
-    def __init__(self, assistant):
+    def __init__(self, assistant, root):
         self.assistant = assistant
+        self.root = root
         self.window = None
-        self.t = THEMES[get_windows_theme()]
+        self._current_theme_name = get_windows_theme()
+        self.t = THEMES[self._current_theme_name]
         self.show_transcripts = False
+        self.last_omi_message = ""
+        self.overlay = OverlayWindow(self.root)
+
+    def update_theme(self, theme_name):
+        """Met à jour le thème en temps réel"""
+        if theme_name == self._current_theme_name:
+            return
+            
+        self._current_theme_name = theme_name
+        self.t = THEMES[theme_name]
+        
+        if self.window and self.window.winfo_exists():
+            # Sauvegarde de l'état actuel
+            current_input = self.input_var.get()
+            is_visible = self.window.winfo_viewable()
+            
+            # On détruit et on recrée pour appliquer proprement les nouvelles couleurs
+            self.window.destroy()
+            self.window = None
+            
+            if is_visible:
+                self.show()
+                if hasattr(self, 'input_var'):
+                    self.input_var.set(current_input)
 
     def show(self):
+        self.overlay.hide()
         if self.window and self.window.winfo_exists():
             self.window.deiconify()
             self.window.lift()
             self.window.focus_force()
             return
-        self.t = THEMES[get_windows_theme()]
-        self.window = tk.Toplevel()
+        
+        # On s'assure d'avoir le dernier thème au moment de l'ouverture
+        self._current_theme_name = get_windows_theme()
+        self.t = THEMES[self._current_theme_name]
+        
+        self.window = tk.Toplevel(self.root)
         self._build_ui()
+
+    def minimize(self, event=None):
+        if self.window:
+            self.window.withdraw()
+            if self.last_omi_message:
+                self.overlay.show(self.last_omi_message)
+
+    def close_completely(self, event=None):
+        if self.window:
+            self.window.withdraw()
+        self.overlay.hide()
 
     def _build_ui(self):
         W, H = 360, 500
@@ -135,18 +242,19 @@ class PopupWindow:
         # (pas de Frame intermédiaire pour ne pas boucher les coins arrondis)
 
         lbl_title = tk.Label(root_canvas, text="OMI", font=("Segoe UI", 11, "bold"),
-                             fg=t["fg"], bg=t["bg"])
+                             fg=t["fg"], bg=t["bg"], cursor="hand2")
         root_canvas.create_window(16, 22, anchor="w", window=lbl_title)
+        lbl_title.bind("<Button-1>", self.minimize)
 
         close_btn = tk.Label(root_canvas, text="×", font=("Segoe UI", 15),
                              fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
         root_canvas.create_window(W - 14, 22, anchor="e", window=close_btn)
-        close_btn.bind("<Button-1>", lambda e: win.withdraw())
+        close_btn.bind("<Button-1>", self.close_completely)
 
         min_btn = tk.Label(root_canvas, text="—", font=("Segoe UI", 11),
                              fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
         root_canvas.create_window(W - 38, 22, anchor="e", window=min_btn)
-        min_btn.bind("<Button-1>", lambda e: win.withdraw())
+        min_btn.bind("<Button-1>", self.minimize)
 
         self.trans_btn = tk.Label(root_canvas, text="🎙️", font=("Segoe UI", 10),
                                     fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
@@ -258,6 +366,9 @@ class PopupWindow:
 
     # ── Messages ──────────────────────────────────────────
     def _append(self, sender, text, sender_tag, text_tag):
+        if sender in ["OMI", "📷 ÉCRAN", "🎤 AUDIO"]:
+            self.last_omi_message = text
+            self.overlay.update_text(text)
         t = self.msg_text
         t.config(state="normal")
         t.insert("end", f"\n{sender}\n", sender_tag)
@@ -301,6 +412,8 @@ class PopupWindow:
             self.window.after(0, lambda: self._do_update_status(status))
 
     def _do_update_status(self, new_status):
+        self.last_omi_message = new_status
+        self.overlay.update_text(new_status)
         t = self.msg_text
         t.config(state="normal")
         idx = t.search(self._last_status, "1.0", backwards=True, stopindex="end")
@@ -313,6 +426,8 @@ class PopupWindow:
         t.see("end")
 
     def _replace_last(self, text):
+        self.last_omi_message = text
+        self.overlay.update_text(text)
         t = self.msg_text
         t.config(state="normal")
         idx = t.search(self._last_status, "1.0", backwards=True, stopindex="end")
@@ -370,7 +485,7 @@ class PopupWindow:
     def _do_force_analyze(self):
         try:
             img = self.assistant._capture_screen()
-            self.assistant._analyze_screen(img)
+            self.assistant._analyze_vision([img])
         except Exception as e:
             if self.window and self.window.winfo_exists():
                 self.window.after(0, lambda: self._append("ERREUR", str(e),
@@ -399,15 +514,19 @@ class TrayApp:
         self.assistant = assistant
         self.popup = None
         self._root = None
+        self._current_theme_name = get_windows_theme()
 
     def run(self):
         self._root = tk.Tk()
         self._root.withdraw()
         self._root.title("OmiAssistant")
 
-        self.popup = PopupWindow(self.assistant)
+        self.popup = PopupWindow(self.assistant, self._root)
         self.assistant.on_suggestion_callback = self._on_new_suggestion
         self.assistant.on_transcript_callback = self._on_new_transcript
+
+        # Lancer la surveillance du thème Windows
+        self._check_theme_loop()
 
         icon_img = create_icon_image()
         menu = pystray.Menu(
@@ -418,6 +537,17 @@ class TrayApp:
 
         threading.Thread(target=self.icon.run, daemon=True).start()
         self._root.mainloop()
+
+    def _check_theme_loop(self):
+        """Vérifie périodiquement si le thème Windows a changé"""
+        new_theme = get_windows_theme()
+        if new_theme != self._current_theme_name:
+            self._current_theme_name = new_theme
+            if self.popup:
+                self.popup.update_theme(new_theme)
+        
+        if self._root:
+            self._root.after(3000, self._check_theme_loop)
 
     def _open_popup(self, icon=None, item=None):
         self._root.after(0, self.popup.show)
