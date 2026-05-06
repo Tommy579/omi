@@ -40,6 +40,11 @@ class Assistant:
 TU AS UN ACCÈS INTÉGRAL À CET ORDINATEUR ET TU ES UN AGENT AUTONOME.
 Ton but est d'exécuter les demandes de l'utilisateur de manière RAPIDE et INVISIBLE.
 
+### Style de réponse (CRITIQUE) :
+- MOTS CLÉS UNIQUEMENT.
+- Réponses de 2-3 mots maximum.
+- Pas de politesse, pas de phrases.
+
 ### Stratégie de Rapidité (Priorité 1) :
 - **Ne pas utiliser la Vision par défaut** : L'analyse d'image est lente. Utilise `get_ui_tree()` pour lire instantanément le texte et les boutons.
 - **Recherche de fichiers** : Utilise `search_files(query)` qui est instantané grâce à l'index Windows. Ne parcours pas le disque manuellement.
@@ -73,6 +78,7 @@ Tu es invisible, rapide, et efficace.
         self.on_suggestion_callback = None
         self.on_transcript_callback = None
         self._lock = threading.Lock()
+        self.last_camera_time = 0
 
     # ─────────────────────────────────────────────
     # Contrôles
@@ -110,11 +116,13 @@ Tu es invisible, rapide, et efficace.
                     screen_img = self._capture_screen()
                     images.append(screen_img)
                     
-                    # Capture de la caméra si activée
-                    if ENABLE_CAMERA:
+                    # Capture de la caméra si activée et intervalle respecté
+                    now = time.time()
+                    if ENABLE_CAMERA and (now - self.last_camera_time) >= CAMERA_CAPTURE_INTERVAL:
                         camera_img = self._capture_camera()
                         if camera_img:
                             images.append(camera_img)
+                            self.last_camera_time = now
                     
                     self._analyze_vision(images)
             except Exception as e:
@@ -244,9 +252,9 @@ Tu es invisible, rapide, et efficace.
                     if self.on_transcript_callback:
                         self.on_transcript_callback(text)
                     
-                    # On n'analyse pour les suggestions que si non en pause
-                    if not self.paused and len(text) > 15:
-                        self._analyze_audio(text)
+                    # L'analyse audio automatique est désactivée (Gemini n'analyse que sur commande chat)
+                    # if not self.paused and len(text) > 15:
+                    #     self._analyze_audio(text)
             except Exception as e:
                 print(f"[Micro] Erreur : {e}")
                 if loopback_idx is not None:
