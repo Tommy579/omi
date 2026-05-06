@@ -192,7 +192,12 @@ def inspect_image(file_path: str):
 def execute_command(command: str):
     """Exécute une commande système (Prudence !)."""
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=10)
+        # Sur Windows, on empêche l'ouverture d'une fenêtre de console flash
+        creation_flags = 0
+        if platform.system() == "Windows":
+            creation_flags = 0x08000000 # CREATE_NO_WINDOW
+            
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=10, creationflags=creation_flags)
         return {
             "stdout": result.stdout,
             "stderr": result.stderr,
