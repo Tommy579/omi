@@ -4,11 +4,15 @@ Modifie ce fichier pour personnaliser le comportement
 """
 
 import os
+from dotenv import load_dotenv
+
+# Charger les variables d'environnement depuis le fichier .env
+load_dotenv()
 
 # === CLÉS API ===
 # Clé Gemini GRATUITE sur : https://aistudio.google.com/apikey
-# COLLE TA CLÉ ENTRE LES GUILLEMETS CI-DESSOUS
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyCagbOwFueLFazbBYP3sZSWIj7Y3OAY-j8")
+# La clé est lue depuis le fichier .env (non partagé sur Git) ou une variable d'environnement
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # === CAPTURE ÉCRAN ===
 # Intervalle entre chaque analyse d'écran (en secondes)

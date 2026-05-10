@@ -11,3 +11,4 @@ opencv-python
 psutil
 pyperclip
 pywin32
+python-dotenv

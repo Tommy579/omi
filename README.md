@@ -19,6 +19,7 @@ Le script va :
 ```
 omi-windows/
 ├── main.py          # Point d'entrée
+├── .env             # 🔑 Ta clé API (ignoré par Git)
 ├── config.py        # ⚙️ Paramètres à modifier ici
 ├── install.py       # Script d'installation
 ├── core/
@@ -29,11 +30,12 @@ omi-windows/
 
 ## Personnalisation
 
-Ouvre `config.py` pour modifier :
-- `SCREEN_CAPTURE_INTERVAL` : fréquence d'analyse de l'écran (défaut : 15s)
-- `ENABLE_MICROPHONE` : activer/désactiver le micro
-- `SYSTEM_PROMPT` : changer la personnalité de l'assistant
-- `GEMINI_MODEL` : changer le modèle IA
+- **Clé API** : La clé est stockée dans le fichier `.env`. Ne partage jamais ce fichier.
+- **Paramètres** : Ouvre `config.py` pour modifier :
+  - `SCREEN_CAPTURE_INTERVAL` : fréquence d'analyse de l'écran (défaut : 5s)
+  - `ENABLE_MICROPHONE` : activer/désactiver le micro
+  - `SYSTEM_PROMPT` : changer la personnalité de l'assistant
+  - `GEMINI_MODEL` : changer le modèle IA
 
 ## Utilisation
 
@@ -50,3 +52,4 @@ Ouvre `config.py` pour modifier :
 - `Pillow` — traitement image
 - `pystray` — icône système
 - `sounddevice` + `openai-whisper` — transcription micro (optionnel)
+- `python-dotenv` — gestion des variables d'environnement

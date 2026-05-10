@@ -67,17 +67,10 @@ def setup_api_key():
     if not key.startswith("AIza"):
         print("  ⚠ La clé ne semble pas valide, mais on continue.")
     
-    # Met à jour config.py avec la vraie clé
-    config_path = APP_DIR / "config.py"
-    lines = config_path.read_text(encoding="utf-8").splitlines()
-    new_lines = []
-    for line in lines:
-        if line.startswith("GEMINI_API_KEY ="):
-            new_lines.append(f'GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "{key}")')
-        else:
-            new_lines.append(line)
-    config_path.write_text("\n".join(new_lines), encoding="utf-8")
-    print("  ✓ Clé enregistrée dans config.py")
+    # Enregistre la clé dans le fichier .env
+    env_path = APP_DIR / ".env"
+    env_path.write_text(f"GEMINI_API_KEY={key}\n", encoding="utf-8")
+    print("  ✓ Clé enregistrée dans .env (ignoré par Git)")
 
 
 def setup_autostart():
