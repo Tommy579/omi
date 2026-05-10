@@ -107,11 +107,9 @@ class InstallerApp:
             self.progress['value'] = 60
             self.root.update()
 
-            # 4. Configurer la clé API dans le fichier config.py installé
-            config_file = self.install_path / "config.py"
-            content = config_file.read_text(encoding="utf-8")
-            new_content = content.replace('os.getenv("GEMINI_API_KEY", "AIzaSyCagbOwFueLFazbBYP3sZSWIj7Y3OAY-j8")', f'"{key}"')
-            config_file.write_text(new_content, encoding="utf-8")
+            # 4. Configurer la clé API dans le fichier .env
+            env_file = self.install_path / ".env"
+            env_file.write_text(f"GEMINI_API_KEY={key}\n", encoding="utf-8")
 
             # 5. Créer les raccourcis
             exe_target = self.install_path / "main.py" # Ou OMI.exe si compilé

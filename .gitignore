@@ -32,6 +32,7 @@ ENV/
 # App specific
 *.spec
 *.bat
+*.bak
 !install.py
 
 # API Keys
