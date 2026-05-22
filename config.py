@@ -35,7 +35,7 @@ ENABLE_MICROPHONE = True
 # Modèle Gemini à utiliser
 # On utilise le 3.1 Lite Preview qui a souvent des quotas plus larges
 # que les versions stables 2.x saturées.
-GEMINI_MODEL = "models/gemini-3.1-flash-lite-preview"
+GEMINI_MODEL = "models/gemini-3.1-flash-lite"
 
 # Autoriser l'assistant à utiliser le clavier/souris sans demande explicite
 ALLOW_AUTONOMOUS_UI_INTERACTION = False
