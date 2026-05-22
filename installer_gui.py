@@ -1,31 +1,39 @@
 """
 OMI Installer GUI
-Ce script sera compilé en un seul EXE qui installe l'application,
-configure la clé API, et crée les raccourcis.
+Ce script est compilé en OMI_Setup.exe.
+Il installe l'exécutable OmiAssistant.exe, configure la clé API et crée les raccourcis.
 """
 
 import os
 import sys
 import shutil
-import ctypes
 import tkinter as tk
 from tkinter import messagebox, ttk
 from pathlib import Path
 
-# On utilise winshell ou dispatch pour les raccourcis si dispo, 
-# sinon on utilise un script VBS temporaire (méthode la plus robuste sans dépendances)
 def create_shortcut(target, shortcut_path, work_dir):
-    vbs = f'Set oWS = WScript.CreateObject("WScript.Shell") : sLinkFile = "{shortcut_path}" : Set oLink = oWS.CreateShortcut(sLinkFile) : oLink.TargetPath = "{target}" : oLink.WorkingDirectory = "{work_dir}" : oLink.Save'
-    vbs_path = Path(os.environ["TEMP"]) / "shortcut.vbs"
-    vbs_path.write_text(vbs, encoding="cp1252")
-    os.system(f'cscript //nologo "{vbs_path}"')
-    os.remove(vbs_path)
+    """Crée un raccourci Windows via un script VBS temporaire"""
+    try:
+        vbs = (
+            f'Set oWS = WScript.CreateObject("WScript.Shell")\n'
+            f'sLinkFile = "{shortcut_path}"\n'
+            f'Set oLink = oWS.CreateShortcut(sLinkFile)\n'
+            f'oLink.TargetPath = "{target}"\n'
+            f'oLink.WorkingDirectory = "{work_dir}"\n'
+            f'oLink.Save'
+        )
+        vbs_path = Path(os.environ["TEMP"]) / "shortcut.vbs"
+        vbs_path.write_text(vbs, encoding="cp1252")
+        os.system(f'cscript //nologo "{vbs_path}"')
+        os.remove(vbs_path)
+    except Exception as e:
+        print(f"Erreur raccourci : {e}")
 
 class InstallerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Installation de OMI")
-        self.root.geometry("500x350")
+        self.root.geometry("500x400")
         self.root.resizable(False, False)
         
         # Style
@@ -34,6 +42,7 @@ class InstallerApp:
         
         # Variables
         self.api_key = tk.StringVar()
+        # Installation dans le dossier utilisateur pour éviter les problèmes de droits admin
         self.install_path = Path(os.environ["LOCALAPPDATA"]) / "Programs" / "OMI"
         
         self._build_ui()
@@ -48,13 +57,19 @@ class InstallerApp:
         content = tk.Frame(self.root, bg=self.bg, padx=30, pady=20)
         content.pack(fill="both", expand=True)
         
+        tk.Label(content, text="Bienvenue dans l'installeur de OMI.", font=("Segoe UI", 10, "bold"), bg=self.bg).pack(anchor="w", pady=(0, 10))
+        
         tk.Label(content, text="Clé API Gemini :", font=("Segoe UI", 10), bg=self.bg).pack(anchor="w")
-        tk.Entry(content, textvariable=self.api_key, font=("Segoe UI", 10), width=50).pack(pady=5)
-        tk.Label(content, text="Tu peux en obtenir une gratuitement sur https://aistudio.google.com/apikey", 
-                 font=("Segoe UI", 8), fg="#666666", bg=self.bg).pack(anchor="w")
+        self.entry_key = tk.Entry(content, textvariable=self.api_key, font=("Segoe UI", 10), width=50)
+        self.entry_key.pack(pady=5)
+        
+        tk.Label(content, text="Obtiens ta clé gratuitement sur :", font=("Segoe UI", 8), bg=self.bg).pack(anchor="w")
+        link = tk.Label(content, text="https://aistudio.google.com/apikey", font=("Segoe UI", 8, "underline"), fg="blue", bg=self.bg, cursor="hand2")
+        link.pack(anchor="w")
+        link.bind("<Button-1>", lambda e: os.startfile("https://aistudio.google.com/apikey"))
         
         tk.Label(content, text=f"\nL'application sera installée dans :\n{self.install_path}", 
-                 font=("Segoe UI", 9), bg=self.bg, justify="left").pack(anchor="w")
+                 font=("Segoe UI", 9), bg=self.bg, justify="left").pack(anchor="w", pady=10)
         
         # Progress (hidden at start)
         self.progress = ttk.Progressbar(content, orient="horizontal", length=400, mode="determinate")
@@ -70,10 +85,11 @@ class InstallerApp:
     def install(self):
         key = self.api_key.get().strip()
         if not key.startswith("AIza"):
-            if not messagebox.askyesno("Attention", "La clé API semble invalide. Continuer quand même ?"):
+            if not messagebox.askyesno("Attention", "La clé API semble incorrecte. Continuer ?"):
                 return
         
         self.btn_install.config(state="disabled")
+        self.entry_key.config(state="disabled")
         self.progress.pack(pady=10)
         self.root.update()
 
@@ -83,67 +99,61 @@ class InstallerApp:
             self.progress['value'] = 20
             self.root.update()
 
-            # 2. Déterminer où sont les fichiers (si compilé avec PyInstaller)
-            # Dans un EXE --onefile, les fichiers sont dans sys._MEIPASS
+            # 2. Dossier source (fichiers embarqués dans le Setup.exe)
             source_dir = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
             
-            # 3. Copier les fichiers
-            # On simule la copie pour cet exemple, mais en réalité on copierait 
-            # tout le contenu du bundle vers self.install_path
-            # Pour l'instant, on suppose que l'assistant est déjà compilé sous le nom OMI.exe
-            # ou qu'on installe les scripts.
-            
-            # NOTE: Dans un vrai setup.exe, on copierait l'EXE de l'appli.
-            # Ici, on va copier les dossiers sources essentiels pour que l'appli tourne.
-            for item in ['core', 'ui', 'main.py', 'config.py', 'omi_icon.ico']:
-                src = source_dir / item
-                dst = self.install_path / item
-                if src.is_dir():
-                    if dst.exists(): shutil.rmtree(dst)
-                    shutil.copytree(src, dst)
-                elif src.exists():
-                    shutil.copy2(src, dst)
+            exe_name = "OmiAssistant.exe"
+            icon_name = "omi_icon.ico"
+
+            # 3. Copier l'exécutable de l'assistant
+            if (source_dir / exe_name).exists():
+                shutil.copy2(source_dir / exe_name, self.install_path / exe_name)
+            else:
+                raise FileNotFoundError(f"Impossible de trouver {exe_name} dans le package d'installation.")
+
+            if (source_dir / icon_name).exists():
+                shutil.copy2(source_dir / icon_name, self.install_path / icon_name)
             
             self.progress['value'] = 60
             self.root.update()
 
-            # 4. Configurer la clé API dans le fichier .env
+            # 4. Créer le fichier .env avec la clé fournie
             env_file = self.install_path / ".env"
             env_file.write_text(f"GEMINI_API_KEY={key}\n", encoding="utf-8")
 
             # 5. Créer les raccourcis
-            exe_target = self.install_path / "main.py" # Ou OMI.exe si compilé
-            # Pour un script .py, on doit lancer avec python.exe (ou pythonw.exe)
-            python_exe = sys.executable.replace("python.exe", "pythonw.exe")
-            target_cmd = f'"{python_exe}" "{exe_target}"'
+            desktop = Path(os.path.join(os.environ['USERPROFILE'], 'Desktop'))
+            start_menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
             
-            desktop = Path(winshell_get_desktop())
-            start_menu = Path(os.environ["PROGRAMDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            target_exe = self.install_path / exe_name
             
-            create_shortcut(python_exe, desktop / "OMI.lnk", self.install_path)
-            # On ajoute l'argument du script via VBS est plus complexe, 
-            # simplifions : on crée un petit .bat de lancement dans le dossier install
-            launcher_bat = self.install_path / "launcher.vbs"
-            launcher_bat.write_text(f'CreateObject("WScript.Shell").Run "pythonw.exe ""{exe_target}""", 0, False', encoding="utf-8")
-            
-            create_shortcut(launcher_bat, desktop / "OMI.lnk", self.install_path)
-            create_shortcut(launcher_bat, start_menu / "OMI.lnk", self.install_path)
+            create_shortcut(str(target_exe), desktop / "OMI.lnk", str(self.install_path))
+            create_shortcut(str(target_exe), start_menu / "OMI.lnk", str(self.install_path))
+
+            # 6. Optionnel : Ajout au démarrage automatique (Registry ou dossier Startup)
+            startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+            create_shortcut(str(target_exe), startup_dir / "OMI.lnk", str(self.install_path))
 
             self.progress['value'] = 100
             self.root.update()
             
-            messagebox.showinfo("Succès", "OMI a été installé avec succès !\nDes raccourcis ont été créés sur le bureau et dans le menu Démarrer.")
+            messagebox.showinfo("Succès", "OMI a été installé !\n\nL'assistant se lancera automatiquement au démarrage.\nTu peux aussi le lancer depuis le raccourci sur ton bureau.")
+            
+            # Lancer l'appli immédiatement
+            os.startfile(target_exe)
             self.root.destroy()
 
         except Exception as e:
-            messagebox.showerror("Erreur", f"Une erreur est survenue lors de l'installation :\n{e}")
+            messagebox.showerror("Erreur d'installation", f"Détails : {e}")
             self.btn_install.config(state="normal")
-
-def winshell_get_desktop():
-    # Fallback si winshell non présent
-    return os.path.join(os.environ['USERPROFILE'], 'Desktop')
+            self.entry_key.config(state="normal")
 
 if __name__ == "__main__":
     root = tk.Tk()
+    # Icône de la fenêtre si dispo
+    source_dir = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
+    if (source_dir / "omi_icon.ico").exists():
+        root.iconbitmap(str(source_dir / "omi_icon.ico"))
+    
     app = InstallerApp(root)
     root.mainloop()

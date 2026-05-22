@@ -109,6 +109,7 @@ def build_exe():
         "--windowed",          # pas de console
         "--name", APP_NAME,
         "--add-data", f"{APP_DIR / 'config.py'};.",
+        "--add-data", f"{APP_DIR / '.env'};.",
         str(MAIN_SCRIPT),
     ]
     
