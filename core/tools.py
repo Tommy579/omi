@@ -253,15 +253,35 @@ def press_key(*keys: str):
     except Exception as e:
         return {"error": str(e)}
 
-from core.database import query_transcripts, search_transcripts
+import sqlite3
+from core.database import DB_PATH, query_transcripts, search_transcripts
 
-def query_transcript_history(query: str = None, limit: int = 50):
-    """Consulte la base de données des transcriptions."""
+def query_transcript_history(query: str = None, limit: int = 50, speaker: str = None):
+    """Consulte la base de données des transcriptions audio.
+    
+    - query : recherche textuelle dans les transcriptions
+    - speaker : filtre par source. Valeurs possibles : 'User' (micro physique), 
+                'System_Audio' (son interne du PC), None (tout)
+    - limit : nombre maximum de résultats
+    """
     try:
         if query:
             rows = search_transcripts(query)[:limit]
         else:
-            rows = query_transcripts(limit=limit)
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            if speaker:
+                cursor.execute(
+                    'SELECT timestamp, speaker, text FROM transcripts WHERE speaker=? ORDER BY timestamp DESC LIMIT ?',
+                    (speaker, limit)
+                )
+            else:
+                cursor.execute(
+                    'SELECT timestamp, speaker, text FROM transcripts ORDER BY timestamp DESC LIMIT ?',
+                    (limit,)
+                )
+            rows = cursor.fetchall()
+            conn.close()
         return {"transcripts": [{"timestamp": r[0], "speaker": r[1], "text": r[2]} for r in rows]}
     except Exception as e:
         return {"error": str(e)}
