@@ -16,7 +16,6 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # === CAPTURE ÉCRAN ===
 # Intervalle entre chaque analyse d'écran (en secondes)
-SCREEN_CAPTURE_INTERVAL = 5
 
 # === CAPTURE CAMÉRA ===
 # Active/désactive l'accès à la caméra
@@ -78,6 +77,33 @@ RÈGLES CRITIQUES :
 # Nombre max de captures stockées en mémoire courte
 MAX_MEMORY_ITEMS = 20
 
+
+
+# === OPTIMISATION TOKENS ===
+# Résolution des captures envoyées à Gemini (réduit drastiquement les tokens)
+SCREEN_CAPTURE_SIZE = (854, 480)
+CAMERA_CAPTURE_SIZE = (320, 240)
+
+# Seuil de différence d'écran pour décider d'envoyer ou non à Gemini (0.0 à 1.0)
+SCREEN_CHANGE_THRESHOLD = 0.03
+
+# Nombre max de frames identiques consécutives avant forcer quand même une analyse
+MAX_UNCHANGED_FRAMES = 3
+
+# Nombre max de tours de chat avant de tailler l'historique de la session
+MAX_CHAT_TURNS = 20
+
+# Intervalle d'analyse écran (augmente de 5 à 10 pour réduire les tokens)
+SCREEN_CAPTURE_INTERVAL = 10
+
+# Nombre minimum de mots dans get_ui_tree pour considérer l'écran comme "textuel"
+# En dessous de ce seuil, on envoie l'image à la place
+UI_TREE_MIN_WORDS = 80
+
+# Extensions de fichiers que OMI peut lire directement au lieu de capturer l'écran
+READABLE_EXTENSIONS = {'.pdf', '.py', '.txt', '.md', '.js', '.ts', '.html', '.css',
+                       '.json', '.yaml', '.yml', '.csv', '.c', '.cpp', '.h',
+                       '.rs', '.go', '.sh', '.docx', '.bat', '.ps1'}
 
 
 # === NOTIFICATIONS ===
