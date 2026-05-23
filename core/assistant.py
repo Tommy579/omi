@@ -31,6 +31,8 @@ from config import (
     SCREEN_CHANGE_THRESHOLD,
     MAX_UNCHANGED_FRAMES,
     MAX_CHAT_TURNS,
+    UI_TREE_MIN_WORDS,
+    READABLE_EXTENSIONS,
 )
 
 from core.tools import TOOLS_LIST
@@ -139,6 +141,91 @@ Tu es invisible, rapide, et efficace.
     # Capture Vision (Écran + Caméra) et Analyse
     # ─────────────────────────────────────────────
 
+    def _get_screen_text(self) -> str | None:
+        """Extrait le texte de la fenêtre active via UI Automation (local, gratuit, instantané).
+        
+        Retourne le texte si l'écran est suffisamment textuel (> UI_TREE_MIN_WORDS mots),
+        None sinon (dans ce cas on envoie l'image à la place).
+        """
+        try:
+            from pywinauto import Desktop
+            app = Desktop(backend="uia").active_window()
+            if app is None:
+                return None
+
+            elements = []
+            for child in app.descendants():
+                try:
+                    name = child.window_text()
+                    if name and len(name.strip()) > 2:
+                        elements.append(name.strip())
+                except Exception:
+                    continue
+
+            if not elements:
+                return None
+
+            text = "\n".join(elements[:200])  # Limite à 200 éléments pour éviter le flood
+            word_count = len(text.split())
+
+            if word_count < UI_TREE_MIN_WORDS:
+                return None  # Pas assez de texte → mode image
+
+            return text
+        except Exception as e:
+            print(f"[UI Tree] Erreur extraction texte : {e}")
+            return None
+
+    def _get_active_document(self) -> tuple[str, str] | tuple[None, None]:
+        """Détecte si la fenêtre active affiche un fichier lisible et retourne (chemin, contenu).
+        
+        Cherche le nom de fichier dans le titre de la fenêtre, le localise sur le disque
+        via search_files(), puis lit son contenu complet avec read_file().
+        Retourne (None, None) si aucun fichier détectable ou lisible.
+        """
+        try:
+            import re
+            import pygetwindow as gw
+            from core.tools import search_files, read_file
+
+            active = gw.getActiveWindow()
+            if not active or not active.title:
+                return None, None
+
+            title = active.title
+
+            # Cherche un nom de fichier avec extension dans le titre de la fenêtre
+            # Couvre : "main.py — VS Code", "rapport.pdf - Adobe", "README.md · GitHub", etc.
+            pattern = r'([\w\-. ]+\.(?:' + '|'.join(e.lstrip('.') for e in READABLE_EXTENSIONS) + r'))'
+            match = re.search(pattern, title, re.IGNORECASE)
+            if not match:
+                return None, None
+
+            filename = match.group(1).strip()
+
+            # Localiser le fichier sur le disque
+            result = search_files(filename)
+            matches = result.get("matches", [])
+            if not matches:
+                return None, None
+
+            file_path = matches[0]
+
+            # Lire le contenu du fichier
+            content_result = read_file(file_path)
+            if "error" in content_result:
+                return None, None
+
+            content = content_result.get("content", "")
+            if not content or len(content.strip()) < 50:
+                return None, None
+
+            return file_path, content
+
+        except Exception as e:
+            print(f"[Document] Erreur détection fichier actif : {e}")
+            return None, None
+
     def _screen_changed(self, img: Image.Image) -> bool:
         """Retourne True si l'écran a changé suffisamment pour justifier un appel API."""
         import numpy as np
@@ -187,7 +274,7 @@ Tu es invisible, rapide, et efficace.
         return img
 
     def _capture_camera(self):
-        """Capture une image depuis la webcam (instance partagée, pas de fuite mémoire)."""
+        """Capture une image depuis la webcam (instance persistante, pas de fuite mémoire)."""
         try:
             if self._camera is None or not self._camera.isOpened():
                 return None
@@ -203,43 +290,91 @@ Tu es invisible, rapide, et efficace.
             return None
 
     def _analyze_vision(self, images):
-        """Envoie les images (écran + caméra) à Gemini via la session de chat"""
-        self._trim_chat_history_if_needed()
-        prompt = "Voici mon écran actuel"
-        if len(images) > 1:
-            prompt += " et une vue de ma caméra."
-        else:
-            prompt += "."
+        """Analyse la situation en choisissant le mode le plus économique :
         
-        prompt += " Analyse la situation. Si tu remarques des mauvaises habitudes (se ronger les ongles, posture, distraction téléphone) ou une perte de concentration sur l'écran, fais une suggestion courte pour m'aider."
+        Priorité 1 — Document ouvert détecté → lire le fichier complet (texte, 0 token image)
+        Priorité 2 — Écran textuel → envoyer le texte UI Tree (texte, 0 token image)
+        Priorité 3 — Écran visuel → envoyer l'image (tokens image normaux)
+        """
+        self._trim_chat_history_if_needed()
 
         try:
-            # On envoie les images dans la session
-            response = self.chat_session.send_message([prompt] + images)
+            # --- Priorité 1 : document lisible ouvert ---
+            file_path, doc_content = self._get_active_document()
+            if file_path and doc_content:
+                # Tronquer si trop long (limite raisonnable pour éviter de saturer le contexte)
+                max_chars = 12000
+                truncated = ""
+                if len(doc_content) > max_chars:
+                    doc_content = doc_content[:max_chars]
+                    truncated = f"\n[... document tronqué à {max_chars} caractères ...]"
+
+                prompt = (
+                    f"Je travaille sur le fichier `{file_path}`.\n"
+                    f"Voici son contenu complet :\n\n"
+                    f"```\n{doc_content}{truncated}\n```\n\n"
+                    f"Analyse ce contenu. Si tu vois des erreurs, des améliorations possibles "
+                    f"ou quelque chose d'important, dis-le moi brièvement."
+                )
+                mode = "document"
+
+            else:
+                # --- Priorité 2 : écran textuel via UI Tree ---
+                screen_text = self._get_screen_text()
+
+                if screen_text:
+                    prompt = (
+                        f"Voici le contenu textuel de mon écran (extrait via l'arbre UI) :\n\n"
+                        f"{screen_text}\n\n"
+                        f"Analyse la situation. Si tu remarques des mauvaises habitudes "
+                        f"ou une opportunité d'aider, fais une suggestion courte."
+                    )
+                    mode = "texte"
+
+                else:
+                    # --- Priorité 3 : écran visuel, envoi de l'image ---
+                    prompt = (
+                        "Voici mon écran actuel"
+                        + (" et une vue de ma caméra." if len(images) > 1 else ".")
+                        + " Analyse la situation. Si tu remarques des mauvaises habitudes "
+                        + "(se ronger les ongles, posture, distraction) ou une opportunité "
+                        + "d'aider, fais une suggestion courte."
+                    )
+                    mode = "image"
+
+            # --- Envoi à Gemini ---
+            with self._lock:
+                if mode == "image":
+                    response = self.chat_session.send_message([prompt] + images)
+                else:
+                    response = self.chat_session.send_message(prompt)
+
             suggestion = response.text.strip()
-            
-            # Filtre pour éviter les suggestions inutiles
+            print(f"[Vision] Mode : {mode} | Réponse : {suggestion[:60]}...")
+
             if "Rien de particulier" in suggestion or len(suggestion) < 5:
                 return
 
         except Exception as e:
             suggestion = f"Erreur API : {e}"
             print(f"[Gemini Vision] Erreur : {e}")
-        
+
         self._add_to_memory("vision", suggestion)
         self._update_suggestion(suggestion)
 
     def _trim_chat_history_if_needed(self):
         """Recrée la session de chat si elle devient trop longue pour limiter les tokens."""
         try:
-            history = self.chat_session.get_history()
+            with self._lock:
+                history = self.chat_session.get_history()
             if len(history) > MAX_CHAT_TURNS * 2:
                 recent = history[-(MAX_CHAT_TURNS * 2):]
-                self.chat_session = self.client.chats.create(
-                    model=GEMINI_MODEL,
-                    config={"system_instruction": self._enhanced_prompt, "tools": TOOLS_LIST},
-                    history=recent
-                )
+                with self._lock:
+                    self.chat_session = self.client.chats.create(
+                        model=GEMINI_MODEL,
+                        config={"system_instruction": self._enhanced_prompt, "tools": TOOLS_LIST},
+                        history=recent
+                    )
                 print(f"[Chat] Historique taillé à {MAX_CHAT_TURNS} tours.")
         except Exception as e:
             print(f"[Chat] Erreur trim historique : {e}")
@@ -361,7 +496,8 @@ Tu es invisible, rapide, et efficace.
     def _analyze_audio(self, transcript):
         prompt = f'J\'ai entendu ceci : "{transcript}". Réagis si c\'est important ou utile.'
         try:
-            response = self.chat_session.send_message(prompt)
+            with self._lock:
+                response = self.chat_session.send_message(prompt)
             suggestion = response.text.strip()
             add_transcript("System", f"Suggestion: {suggestion}")
             self._add_to_memory("audio", suggestion)
@@ -388,7 +524,9 @@ Tu es invisible, rapide, et efficace.
             screen_img = self._capture_screen()
             
             if status_callback: status_callback("Analyse Gemini en cours...")
-            response = self.chat_session.send_message([full_prompt, screen_img])
+            
+            with self._lock:
+                response = self.chat_session.send_message([full_prompt, screen_img])
             text_response = response.text.strip()
             
             if "[UPDATE_SCREEN]" in text_response:

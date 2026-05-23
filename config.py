@@ -96,6 +96,15 @@ MAX_CHAT_TURNS = 20
 # Intervalle d'analyse écran (augmente de 5 à 10 pour réduire les tokens)
 SCREEN_CAPTURE_INTERVAL = 10
 
+# Nombre minimum de mots dans get_ui_tree pour considérer l'écran comme "textuel"
+# En dessous de ce seuil, on envoie l'image à la place
+UI_TREE_MIN_WORDS = 80
+
+# Extensions de fichiers que OMI peut lire directement au lieu de capturer l'écran
+READABLE_EXTENSIONS = {'.pdf', '.py', '.txt', '.md', '.js', '.ts', '.html', '.css',
+                       '.json', '.yaml', '.yml', '.csv', '.c', '.cpp', '.h',
+                       '.rs', '.go', '.sh', '.docx', '.bat', '.ps1'}
+
 
 # === NOTIFICATIONS ===
 # Durée d'affichage du popup (en ms)
