@@ -90,6 +90,7 @@ Tu es invisible, rapide, et efficace.
         self._enhanced_prompt = enhanced_prompt  # Gardé pour le trim de session
         self._last_screen_arr = None
         self._unchanged_count = 0
+        self._doc_cache: dict = {"title": None, "path": None, "content": None}
 
         self._camera = None
         if ENABLE_CAMERA:
@@ -101,8 +102,6 @@ Tu es invisible, rapide, et efficace.
             except Exception as e:
                 print(f"[Caméra] Erreur init : {e}")
 
-        # On utilise une session de chat pour le function calling automatique et le maintien du contexte
-        # removed
         self.memory = deque(maxlen=MAX_MEMORY_ITEMS)
         self.latest_suggestion = "Démarrage en cours..."
         self.is_running = False
@@ -141,15 +140,15 @@ Tu es invisible, rapide, et efficace.
     # Capture Vision (Écran + Caméra) et Analyse
     # ─────────────────────────────────────────────
 
-    def _get_screen_text(self) -> str | None:
+    def _get_screen_text(self, active_window=None) -> str | None:
         """Extrait le texte de la fenêtre active via UI Automation (local, gratuit, instantané).
         
-        Retourne le texte si l'écran est suffisamment textuel (> UI_TREE_MIN_WORDS mots),
-        None sinon (dans ce cas on envoie l'image à la place).
+        active_window : objet pywinauto déjà récupéré (optionnel, pour éviter un double appel).
+        Retourne None si l'écran est trop peu textuel (< UI_TREE_MIN_WORDS mots).
         """
         try:
             from pywinauto import Desktop
-            app = Desktop(backend="uia").active_window()
+            app = active_window or Desktop(backend="uia").active_window()
             if app is None:
                 return None
 
@@ -165,11 +164,9 @@ Tu es invisible, rapide, et efficace.
             if not elements:
                 return None
 
-            text = "\n".join(elements[:200])  # Limite à 200 éléments pour éviter le flood
-            word_count = len(text.split())
-
-            if word_count < UI_TREE_MIN_WORDS:
-                return None  # Pas assez de texte → mode image
+            text = "\n".join(elements[:200])
+            if len(text.split()) < UI_TREE_MIN_WORDS:
+                return None
 
             return text
         except Exception as e:
@@ -179,9 +176,9 @@ Tu es invisible, rapide, et efficace.
     def _get_active_document(self) -> tuple[str, str] | tuple[None, None]:
         """Détecte si la fenêtre active affiche un fichier lisible et retourne (chemin, contenu).
         
-        Cherche le nom de fichier dans le titre de la fenêtre, le localise sur le disque
-        via search_files(), puis lit son contenu complet avec read_file().
-        Retourne (None, None) si aucun fichier détectable ou lisible.
+        - Ignore la fenêtre OMI elle-même
+        - Met en cache le résultat pour éviter un appel search_files à chaque cycle
+        - Retourne (None, None) si aucun fichier détectable ou lisible
         """
         try:
             import re
@@ -194,24 +191,33 @@ Tu es invisible, rapide, et efficace.
 
             title = active.title
 
-            # Cherche un nom de fichier avec extension dans le titre de la fenêtre
-            # Couvre : "main.py — VS Code", "rapport.pdf - Adobe", "README.md · GitHub", etc.
+            # Ignorer la fenêtre OMI pour éviter l'auto-analyse
+            if title.strip().upper() in ("OMI", "OMIASSISTANT"):
+                return None, None
+
+            # Cache : si le titre de la fenêtre n'a pas changé, on réutilise le résultat précédent
+            if title == self._doc_cache.get("title"):
+                cached_path = self._doc_cache.get("path")
+                cached_content = self._doc_cache.get("content")
+                if cached_path and cached_content:
+                    return cached_path, cached_content
+                return None, None
+
+            # Nouveau titre : vider le cache et recalculer
+            self._doc_cache = {"title": title, "path": None, "content": None}
+
             pattern = r'([\w\-. ]+\.(?:' + '|'.join(e.lstrip('.') for e in READABLE_EXTENSIONS) + r'))'
             match = re.search(pattern, title, re.IGNORECASE)
             if not match:
                 return None, None
 
             filename = match.group(1).strip()
-
-            # Localiser le fichier sur le disque
             result = search_files(filename)
             matches = result.get("matches", [])
             if not matches:
                 return None, None
 
             file_path = matches[0]
-
-            # Lire le contenu du fichier
             content_result = read_file(file_path)
             if "error" in content_result:
                 return None, None
@@ -219,6 +225,10 @@ Tu es invisible, rapide, et efficace.
             content = content_result.get("content", "")
             if not content or len(content.strip()) < 50:
                 return None, None
+
+            # Mettre en cache
+            self._doc_cache["path"] = file_path
+            self._doc_cache["content"] = content
 
             return file_path, content
 
@@ -298,9 +308,17 @@ Tu es invisible, rapide, et efficace.
         """
         self._trim_chat_history_if_needed()
 
+        # Récupérer la fenêtre active une seule fois pour les deux méthodes
         try:
-            # --- Priorité 1 : document lisible ouvert ---
-            file_path, doc_content = self._get_active_document()
+            from pywinauto import Desktop
+            _active_win = Desktop(backend="uia").active_window()
+        except Exception:
+            _active_win = None
+
+        # --- Priorité 1 : document lisible ouvert ---
+        file_path, doc_content = self._get_active_document()
+
+        try:
             if file_path and doc_content:
                 # Tronquer si trop long (limite raisonnable pour éviter de saturer le contexte)
                 max_chars = 12000
@@ -320,7 +338,7 @@ Tu es invisible, rapide, et efficace.
 
             else:
                 # --- Priorité 2 : écran textuel via UI Tree ---
-                screen_text = self._get_screen_text()
+                screen_text = self._get_screen_text(active_window=_active_win)
 
                 if screen_text:
                     prompt = (
@@ -363,21 +381,45 @@ Tu es invisible, rapide, et efficace.
         self._update_suggestion(suggestion)
 
     def _trim_chat_history_if_needed(self):
-        """Recrée la session de chat si elle devient trop longue pour limiter les tokens."""
         try:
             with self._lock:
                 history = self.chat_session.get_history()
-            if len(history) > MAX_CHAT_TURNS * 2:
-                recent = history[-(MAX_CHAT_TURNS * 2):]
-                with self._lock:
-                    self.chat_session = self.client.chats.create(
-                        model=GEMINI_MODEL,
-                        config={"system_instruction": self._enhanced_prompt, "tools": TOOLS_LIST},
-                        history=recent
+            if len(history) <= MAX_CHAT_TURNS * 2:
+                return
+
+            recent = history[-(MAX_CHAT_TURNS * 2):]
+
+            # Avancer jusqu'à un tour "user" propre (pas une function_response)
+            start = 0
+            for i, turn in enumerate(recent):
+                if turn.role == "user":
+                    # Vérifier qu'aucune part n'est une function_response
+                    parts = turn.parts if hasattr(turn, "parts") else []
+                    is_func_response = any(
+                        hasattr(p, "function_response") and p.function_response
+                        for p in parts
                     )
-                print(f"[Chat] Historique taillé à {MAX_CHAT_TURNS} tours.")
+                    if not is_func_response:
+                        start = i
+                        break
+
+            recent = recent[start:]
+
+            with self._lock:
+                self.chat_session = self.client.chats.create(
+                    model=GEMINI_MODEL,
+                    config={"system_instruction": self._enhanced_prompt, "tools": TOOLS_LIST},
+                    history=recent
+                )
+            print(f"[Chat] Historique taillé à {len(recent)} tours.")
         except Exception as e:
             print(f"[Chat] Erreur trim historique : {e}")
+            # En dernier recours, repartir d'une session vide
+            with self._lock:
+                self.chat_session = self.client.chats.create(
+                    model=GEMINI_MODEL,
+                    config={"system_instruction": self._enhanced_prompt, "tools": TOOLS_LIST}
+                )
 
     # ─────────────────────────────────────────────
     # Microphone
@@ -388,7 +430,7 @@ Tu es invisible, rapide, et efficace.
         import numpy as np
         try:
             import whisper
-            model = whisper.load_model("tiny")
+            model = whisper.load_model("base")
         except ImportError:
             print("[Micro] whisper non installé, micro désactivé")
             return
@@ -412,35 +454,47 @@ Tu es invisible, rapide, et efficace.
                     break
             p.terminate()
         except Exception as e:
-            print(f"[Audio] pyaudiowpatch non disponible, loopback désactivé : {e}")
-            # Fallback : chercher un device loopback via sounddevice (Stereo Mix, etc.)
+            print(f"[Audio] pyaudiowpatch non disponible : {e}")
+            print("[Audio] Tentative de fallback via sounddevice...")
             keywords = ["mixage", "stereo mix", "loopback", "what u hear", "voicemeeter output", "cable output"]
             devices = sd.query_devices()
+            print("[Audio] Périphériques d'entrée disponibles :")
             for i, dev in enumerate(devices):
                 try:
-                    if dev['max_input_channels'] > 0 and any(k in dev['name'].lower() for k in keywords):
-                        loopback_device_index = i
-                        print(f"[Audio] Loopback fallback détecté : {dev['name']}")
-                        break
+                    if dev['max_input_channels'] > 0:
+                        print(f"  [{i}] {dev['name']} (canaux : {dev['max_input_channels']})")
+                        if any(k in dev['name'].lower() for k in keywords):
+                            loopback_device_index = i
+                            print(f"[Audio] Loopback fallback sélectionné : {dev['name']}")
+                            break
                 except Exception:
                     pass
+            if loopback_device_index is None:
+                print("[Audio] Aucun device loopback trouvé. L'audio système ne sera pas transcrit.")
 
         print(f"[Audio] Micro système : {'index ' + str(loopback_device_index) if loopback_device_index is not None else 'non disponible'}")
 
-        while self.is_running:
-            try:
-                # --- Capture micro physique (voix utilisateur) ---
+        def capture_mic():
+            """Capture et transcrit le micro physique en continu."""
+            while self.is_running:
                 try:
                     mic_audio = sd.rec(
                         int(AUDIO_SEGMENT_DURATION * sample_rate),
                         samplerate=sample_rate, channels=1, dtype="float32",
-                        device=None  # micro par défaut
+                        device=None
                     )
                     sd.wait()
                     mic_data = mic_audio.flatten()
-
-                    if np.abs(mic_data).mean() > 0.005:  # silence detection basique
-                        result = model.transcribe(mic_data, language="fr", fp16=False)
+                    if np.abs(mic_data).mean() > 0.005:
+                        result = model.transcribe(
+                            mic_data,
+                            language="fr",
+                            task="transcribe",
+                            condition_on_previous_text=False,
+                            no_speech_threshold=0.6,
+                            logprob_threshold=-1.0,
+                            beam_size=5,
+                        )
                         text = result["text"].strip()
                         if len(text) > 10:
                             add_transcript("User", text)
@@ -448,50 +502,75 @@ Tu es invisible, rapide, et efficace.
                                 self.on_transcript_callback(text)
                 except Exception as e:
                     print(f"[Micro] Erreur capture voix : {e}")
+                    time.sleep(5)
 
-                # --- Capture audio système (loopback) — stocké sans analyse automatique ---
-                if loopback_device_index is not None:
-                    try:
-                        import pyaudiowpatch as pyaudio
-                        p = pyaudio.PyAudio()
-                        dev_info = p.get_device_info_by_index(loopback_device_index)
-                        channels = int(dev_info["maxInputChannels"])
-                        dev_sample_rate = int(dev_info["defaultSampleRate"])
-                        stream = p.open(
-                            format=pyaudio.paInt16,
-                            channels=channels,
-                            rate=dev_sample_rate,
-                            input=True,
-                            input_device_index=loopback_device_index,
-                            frames_per_buffer=1024
+        def capture_loopback():
+            """Capture et transcrit l'audio système (loopback) en continu."""
+            if loopback_device_index is None:
+                print("[Loopback] Aucun device détecté — thread loopback inactif.")
+                print("[Loopback] Pour activer : installez pyaudiowpatch ou activez 'Mixage stéréo' dans les paramètres audio Windows.")
+                return
+
+            print(f"[Loopback] Démarrage capture sur device index {loopback_device_index}")
+
+            while self.is_running:
+                try:
+                    import pyaudiowpatch as pyaudio
+                    p = pyaudio.PyAudio()
+                    dev_info = p.get_device_info_by_index(loopback_device_index)
+                    channels = int(dev_info["maxInputChannels"])
+                    dev_sample_rate = int(dev_info["defaultSampleRate"])
+                    stream = p.open(
+                        format=pyaudio.paInt16,
+                        channels=channels,
+                        rate=dev_sample_rate,
+                        input=True,
+                        input_device_index=loopback_device_index,
+                        frames_per_buffer=1024
+                    )
+                    frames = []
+                    for _ in range(int(dev_sample_rate / 1024 * AUDIO_SEGMENT_DURATION)):
+                        frames.append(stream.read(1024, exception_on_overflow=False))
+                    stream.stop_stream()
+                    stream.close()
+                    p.terminate()
+
+                    raw = b"".join(frames)
+                    arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+                    if channels > 1:
+                        arr = arr.reshape(-1, channels).mean(axis=1)
+
+                    audio_level = np.abs(arr).mean()
+                    print(f"[Loopback] Niveau audio : {audio_level:.4f}")  # debug — à retirer une fois stable
+
+                    if audio_level > 0.001:  # seuil abaissé (était 0.005)
+                        result = model.transcribe(
+                            arr,
+                            language="fr",
+                            task="transcribe",
+                            condition_on_previous_text=False,
+                            no_speech_threshold=0.6,
+                            logprob_threshold=-1.0,
+                            beam_size=5,
                         )
-                        frames = []
-                        n_frames = int(dev_sample_rate / 1024 * AUDIO_SEGMENT_DURATION)
-                        for _ in range(n_frames):
-                            frames.append(stream.read(1024, exception_on_overflow=False))
-                        stream.stop_stream()
-                        stream.close()
-                        p.terminate()
+                        sys_text = result["text"].strip()
+                        if len(sys_text) > 10:
+                            add_transcript("System_Audio", sys_text)
+                            print(f"[Loopback] Transcrit : {sys_text[:80]}...")
+                    else:
+                        print("[Loopback] Silence détecté, pas de transcription.")
 
-                        raw = b"".join(frames)
-                        arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-                        if channels > 1:
-                            arr = arr.reshape(-1, channels).mean(axis=1)
+                except Exception as e:
+                    print(f"[Loopback] Erreur capture : {e}")
+                    time.sleep(5)
 
-                        if np.abs(arr).mean() > 0.005:
-                            result = model.transcribe(arr, language="fr", fp16=False)
-                            sys_text = result["text"].strip()
-                            if len(sys_text) > 10:
-                                # Stocké avec speaker "System_Audio", accessible sur demande via query_transcript_history
-                                add_transcript("System_Audio", sys_text)
-                                print(f"[Audio Système] Transcrit : {sys_text[:60]}...")
-                    except Exception as e:
-                        print(f"[Loopback] Erreur capture : {e}")
-
-            except Exception as e:
-                print(f"[Micro] Erreur générale : {e}")
-                time.sleep(5)
-
+        # Lancer les deux captures en parallèle
+        t_mic = threading.Thread(target=capture_mic, daemon=True)
+        t_loop = threading.Thread(target=capture_loopback, daemon=True)
+        t_mic.start()
+        t_loop.start()
+        t_mic.join()
+        t_loop.join()
 
     def _analyze_audio(self, transcript):
         prompt = f'J\'ai entendu ceci : "{transcript}". Réagis si c\'est important ou utile.'
@@ -511,35 +590,51 @@ Tu es invisible, rapide, et efficace.
 
     def chat(self, user_message: str, is_system: bool = False, status_callback=None) -> str:
         try:
-            if status_callback: status_callback("Capture de l'écran...")
-            
             if not is_system:
                 recent = query_transcripts(limit=5)
                 context = "\n".join([f"[{r[0]}] {r[1]}: {r[2]}" for r in reversed(recent)])
                 full_prompt = f"Historique récent des transcriptions :\n{context}\n\nUtilisateur : {user_message}"
             else:
                 full_prompt = f"Système : {user_message}"
-            
-            # Prendre un screenshot actuel
-            screen_img = self._capture_screen()
-            
-            if status_callback: status_callback("Analyse Gemini en cours...")
-            
-            with self._lock:
-                response = self.chat_session.send_message([full_prompt, screen_img])
+
+            if status_callback: status_callback("Analyse du contexte...")
+
+            # Essayer d'abord le mode texte (moins de tokens, plus rapide)
+            file_path, doc_content = self._get_active_document()
+            if file_path and doc_content:
+                max_chars = 12000
+                if len(doc_content) > max_chars:
+                    doc_content = doc_content[:max_chars] + "\n[... tronqué ...]"
+                context_block = f"\nContexte — fichier ouvert `{file_path}` :\n```\n{doc_content}\n```\n"
+                full_prompt = context_block + full_prompt
+                if status_callback: status_callback("Analyse Gemini en cours (mode document)...")
+                with self._lock:
+                    response = self.chat_session.send_message(full_prompt)
+            else:
+                screen_text = self._get_screen_text()
+                if screen_text:
+                    full_prompt = f"Contenu de l'écran :\n{screen_text}\n\n{full_prompt}"
+                    if status_callback: status_callback("Analyse Gemini en cours (mode texte)...")
+                    with self._lock:
+                        response = self.chat_session.send_message(full_prompt)
+                else:
+                    # Fallback image
+                    if status_callback: status_callback("Capture de l'écran...")
+                    screen_img = self._capture_screen()
+                    if status_callback: status_callback("Analyse Gemini en cours (mode image)...")
+                    with self._lock:
+                        response = self.chat_session.send_message([full_prompt, screen_img])
+
             text_response = response.text.strip()
-            
+
             if "[UPDATE_SCREEN]" in text_response:
                 clean_text = text_response.replace("[UPDATE_SCREEN]", "").strip()
                 if clean_text and self.on_suggestion_callback:
-                    # Permet d'afficher à l'utilisateur l'étape en cours
                     self._update_suggestion(f"⚙️ {clean_text}")
-                
-                # Boucle automatique pour donner le nouvel écran à l'agent
                 if status_callback: status_callback(f"Action : {clean_text}...")
                 next_step = self.chat("Voici l'écran mis à jour. Continue ton action.", is_system=True, status_callback=status_callback)
                 return f"{clean_text}\n{next_step}".strip()
-                
+
             return text_response
         except Exception as e:
             return f"Erreur API : {e}"

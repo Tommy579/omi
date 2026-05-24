@@ -33,6 +33,7 @@ ENV/
 *.spec
 *.bat
 *.bak
+package-lock.json
 !install.py
 
 # API Keys

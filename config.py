@@ -14,9 +14,6 @@ load_dotenv()
 # La clé est lue depuis le fichier .env (non partagé sur Git) ou une variable d'environnement
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# === CAPTURE ÉCRAN ===
-# Intervalle entre chaque analyse d'écran (en secondes)
-
 # === CAPTURE CAMÉRA ===
 # Active/désactive l'accès à la caméra
 ENABLE_CAMERA = True

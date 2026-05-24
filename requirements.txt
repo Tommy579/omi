@@ -13,3 +13,5 @@ pyperclip
 pywin32
 python-dotenv
 pyaudiowpatch
+pyodbc
+pywinauto

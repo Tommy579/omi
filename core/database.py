@@ -9,10 +9,10 @@ def init_db():
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transcripts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            speaker TEXT,
-            text TEXT
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            speaker   TEXT,
+            text      TEXT
         )
     ''')
     conn.commit()
@@ -21,9 +21,13 @@ def init_db():
 def add_transcript(speaker, text):
     if not text.strip():
         return
+    local_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO transcripts (speaker, text) VALUES (?, ?)', (speaker, text))
+    cursor.execute(
+        'INSERT INTO transcripts (timestamp, speaker, text) VALUES (?, ?, ?)',
+        (local_now, speaker, text)
+    )
     conn.commit()
     conn.close()
 

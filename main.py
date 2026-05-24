@@ -27,15 +27,30 @@ from ui.tray import TrayApp
 
 def main():
     hide_console()
-    
-    # Démarre l'assistant (capture écran + micro + IA)
+
+    # Vérification de la clé API avant tout
+    from config import GEMINI_API_KEY
+    if not GEMINI_API_KEY or not GEMINI_API_KEY.startswith("AIza"):
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "OMI — Clé API manquante",
+            "Aucune clé API Gemini valide n'a été trouvée.\n\n"
+            "1. Va sur https://aistudio.google.com/apikey\n"
+            "2. Génère une clé gratuite\n"
+            "3. Crée un fichier .env à côté de main.py avec :\n"
+            "   GEMINI_API_KEY=ta_clé\n\n"
+            "Puis relance OMI."
+        )
+        root.destroy()
+        return
+
     assistant = Assistant()
-    
-    # Lance l'assistant dans un thread séparé
     assistant_thread = threading.Thread(target=assistant.start, daemon=True)
     assistant_thread.start()
-    
-    # Lance l'UI (icône barre des tâches) - bloque le thread principal
+
     tray = TrayApp(assistant)
     tray.run()
 

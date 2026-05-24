@@ -1,32 +1,38 @@
 import os
 import subprocess
-from pathlib import Path
-from PIL import Image
-import base64
-import io
 import time
 import platform
+import sqlite3
+import webbrowser
+import urllib.parse
+import base64
+import io
 import psutil
 import pyperclip
 import pyodbc
+from pathlib import Path
+from PIL import Image
+
 try:
     import win32evtlog
 except ImportError:
     win32evtlog = None
+
 from pywinauto import Desktop, Application
 import comtypes.client
+
+from config import SCREEN_CAPTURE_SIZE, ALLOW_AUTONOMOUS_UI_INTERACTION
+from core.database import DB_PATH, query_transcripts, search_transcripts
 
 def get_ui_tree(window_title: str = None):
     """Récupère la structure textuelle d'une fenêtre (boutons, textes, etc.). 
     C'est beaucoup plus rapide que l'analyse d'image. Si window_title est None, prend la fenêtre active."""
     try:
-        # On utilise le backend 'uia' pour les apps modernes comme Mobile Connecté
         if window_title:
             app = Desktop(backend="uia").window(title_re=f".*{window_title}.*")
         else:
             app = Desktop(backend="uia").active_window()
         
-        # On récupère les éléments importants pour ne pas saturer le contexte
         elements = []
         for child in app.descendants():
             name = child.window_text()
@@ -34,7 +40,7 @@ def get_ui_tree(window_title: str = None):
             if name and len(name) > 1:
                 elements.append(f"{control_type}: '{name}'")
         
-        return {"window": app.window_text(), "elements": elements[:100]} # Limite à 100 éléments
+        return {"window": app.window_text(), "elements": elements[:100]}
     except Exception as e:
         return {"error": str(e)}
 
@@ -97,12 +103,25 @@ def read_file(file_path: str):
     except Exception as e:
         return {"error": str(e)}
 
-def write_file(file_path: str, content: str):
-    """Écrit ou modifie un fichier texte. Utile pour corriger du code ou prendre des notes."""
+def write_file(file_path: str, content: str, force: bool = False):
+    """Écrit ou modifie un fichier texte.
+    
+    Par défaut, restreint l'écriture au dossier utilisateur (USERPROFILE).
+    Passe force=True pour écrire ailleurs (chemins système, etc.) — à utiliser avec précaution.
+    """
     try:
         path = Path(file_path).expanduser().resolve()
+        user_root = Path(os.environ.get("USERPROFILE", os.path.expanduser("~"))).resolve()
+        
+        if not force and not str(path).startswith(str(user_root)):
+            return {
+                "error": f"Écriture refusée hors du dossier utilisateur ({user_root}). "
+                         f"Utilise force=True si tu es certain de vouloir écrire dans '{path}'."
+            }
+        
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        return {"status": f"Fichier '{file_path}' écrit avec succès."}
+        return {"status": f"Fichier '{path}' écrit avec succès."}
     except Exception as e:
         return {"error": str(e)}
 
@@ -110,12 +129,10 @@ def search_files(query: str, root_dir: str = None):
     """Recherche des fichiers par nom. Utilise l'index Windows Search (instantané) ou scandir (rapide)."""
     matches = []
     
-    # Tentative via Windows Search Index (instantané)
     try:
         conn_str = "Driver={Search.CollatorDSO};Extended Properties='Application=Windows';"
         with pyodbc.connect(conn_str, autocommit=True) as conn:
             with conn.cursor() as cursor:
-                # On cherche dans l'index. System.ItemPathDisplay est le chemin complet.
                 sql = f"SELECT TOP 50 System.ItemPathDisplay FROM SystemIndex WHERE System.FileName LIKE '%{query}%'"
                 cursor.execute(sql)
                 for row in cursor.fetchall():
@@ -123,14 +140,11 @@ def search_files(query: str, root_dir: str = None):
         if matches:
             return {"matches": matches, "method": "windows_index"}
     except Exception:
-        pass # Fallback sur scandir si l'index échoue
+        pass
 
-    # Fallback sur os.scandir (beaucoup plus rapide que rglob)
     try:
         if not root_dir:
-            # On restreint par défaut aux dossiers utilisateurs courants pour la rapidité
             user_dirs = [os.path.join(os.environ['USERPROFILE'], d) for d in ['Documents', 'Desktop', 'Downloads']]
-            # On ajoute le dossier courant
             user_dirs.append(os.getcwd())
         else:
             user_dirs = [root_dir]
@@ -178,24 +192,34 @@ def send_notification(title: str, message: str):
         return {"error": str(e)}
 
 def inspect_image(file_path: str):
-    """Permet à l'assistant de 'voir' une image sur le disque."""
+    """Permet à l'assistant de 'voir' une image sur le disque.
+    Retourne l'image encodée en base64 pour que Gemini puisse l'analyser."""
     try:
         path = Path(file_path).expanduser().resolve()
         if path.suffix.lower() not in ['.png', '.jpg', '.jpeg', '.webp', '.bmp']:
-            return {"error": "Ce n'est pas une image supportée."}
+            return {"error": "Format non supporté. Formats acceptés : png, jpg, jpeg, webp, bmp."}
         img = Image.open(path)
         img.thumbnail((1280, 720), Image.LANCZOS)
-        return {"status": "Image chargée.", "path": str(path)}
+        buffer = io.BytesIO()
+        fmt = "JPEG" if path.suffix.lower() in ['.jpg', '.jpeg'] else "PNG"
+        img.save(buffer, format=fmt)
+        encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        mime = "image/jpeg" if fmt == "JPEG" else "image/png"
+        return {
+            "status": "Image chargée et encodée.",
+            "path": str(path),
+            "mime_type": mime,
+            "base64_data": encoded
+        }
     except Exception as e:
         return {"error": str(e)}
 
 def execute_command(command: str):
     """Exécute une commande système (Prudence !)."""
     try:
-        # Sur Windows, on empêche l'ouverture d'une fenêtre de console flash
         creation_flags = 0
         if platform.system() == "Windows":
-            creation_flags = 0x08000000 # CREATE_NO_WINDOW
+            creation_flags = 0x08000000
             
         result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=10, creationflags=creation_flags)
         return {
@@ -220,23 +244,31 @@ def get_active_window_info():
         return {"error": str(e)}
 
 def mouse_click(x: int, y: int):
-    """Clique à une position spécifique sur l'écran (coordonnées basées sur une image 1280x720)."""
+    """Clique à une position spécifique sur l'écran.
+    Les coordonnées sont basées sur la résolution de capture définie dans SCREEN_CAPTURE_SIZE."""
     try:
         import pyautogui
+        capture_w, capture_h = SCREEN_CAPTURE_SIZE
         screen_w, screen_h = pyautogui.size()
-        real_x = int(x * screen_w / 1280)
-        real_y = int(y * screen_h / 720)
+        real_x = int(x * screen_w / capture_w)
+        real_y = int(y * screen_h / capture_h)
         pyautogui.click(real_x, real_y)
-        return {"status": f"Cliqué à {real_x}, {real_y} (échelle {x}, {y})"}
+        return {"status": f"Cliqué à {real_x}, {real_y} (depuis coordonnées capture {x}, {y})"}
     except Exception as e:
         return {"error": str(e)}
 
 def type_text(text: str):
-    """Tape du texte au clavier."""
+    """Tape du texte au clavier via le presse-papier (compatible AZERTY)."""
     try:
+        import pyperclip
         import pyautogui
-        pyautogui.write(text, interval=0.01)
-        return {"status": f"Texte tapé : {text}"}
+        import time
+        
+        pyperclip.copy(text)
+        time.sleep(0.05)
+        pyautogui.hotkey("ctrl", "v")
+        time.sleep(0.05)
+        return {"status": f"Texte collé : {text}"}
     except Exception as e:
         return {"error": str(e)}
 
@@ -253,41 +285,49 @@ def press_key(*keys: str):
     except Exception as e:
         return {"error": str(e)}
 
-import sqlite3
-from core.database import DB_PATH, query_transcripts, search_transcripts
-
 def query_transcript_history(query: str = None, limit: int = 50, speaker: str = None):
     """Consulte la base de données des transcriptions audio.
     
-    - query : recherche textuelle dans les transcriptions
-    - speaker : filtre par source. Valeurs possibles : 'User' (micro physique), 
-                'System_Audio' (son interne du PC), None (tout)
-    - limit : nombre maximum de résultats
+    - query  : recherche textuelle dans les transcriptions
+    - speaker: filtre par source — 'User' (micro physique), 'System_Audio' (son interne), None (tout)
+    - limit  : nombre maximum de résultats
+    
+    query et speaker peuvent être combinés.
     """
     try:
-        if query:
-            rows = search_transcripts(query)[:limit]
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        if query and speaker:
+            cursor.execute(
+                'SELECT timestamp, speaker, text FROM transcripts '
+                'WHERE text LIKE ? AND speaker = ? ORDER BY timestamp DESC LIMIT ?',
+                (f'%{query}%', speaker, limit)
+            )
+        elif query:
+            cursor.execute(
+                'SELECT timestamp, speaker, text FROM transcripts '
+                'WHERE text LIKE ? ORDER BY timestamp DESC LIMIT ?',
+                (f'%{query}%', limit)
+            )
+        elif speaker:
+            cursor.execute(
+                'SELECT timestamp, speaker, text FROM transcripts '
+                'WHERE speaker = ? ORDER BY timestamp DESC LIMIT ?',
+                (speaker, limit)
+            )
         else:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            if speaker:
-                cursor.execute(
-                    'SELECT timestamp, speaker, text FROM transcripts WHERE speaker=? ORDER BY timestamp DESC LIMIT ?',
-                    (speaker, limit)
-                )
-            else:
-                cursor.execute(
-                    'SELECT timestamp, speaker, text FROM transcripts ORDER BY timestamp DESC LIMIT ?',
-                    (limit,)
-                )
-            rows = cursor.fetchall()
-            conn.close()
+            cursor.execute(
+                'SELECT timestamp, speaker, text FROM transcripts '
+                'ORDER BY timestamp DESC LIMIT ?',
+                (limit,)
+            )
+
+        rows = cursor.fetchall()
+        conn.close()
         return {"transcripts": [{"timestamp": r[0], "speaker": r[1], "text": r[2]} for r in rows]}
     except Exception as e:
         return {"error": str(e)}
-
-import webbrowser
-import urllib.parse
 
 def open_url(url: str):
     """Ouvre une URL dans le navigateur ou lance une app via son URI (ex: 'ms-phone:', 'itunes:')."""
@@ -340,7 +380,6 @@ def list_processes(limit: int = 20, sort_by: str = 'cpu_percent'):
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
         
-        # On trie et on limite
         procs.sort(key=lambda x: x.get(sort_by, 0) or 0, reverse=True)
         return {"processes": procs[:limit]}
     except Exception as e:
@@ -392,7 +431,6 @@ def get_network_connections(limit: int = 50):
 def get_machine_info():
     """Récupère les informations sur la machine et l'environnement (OS, utilisateur, variables d'env)."""
     try:
-        # On filtre les variables d'env sensibles
         env_vars = {k: v for k, v in os.environ.items() 
                     if not any(secret in k.upper() for secret in ["KEY", "SECRET", "TOKEN", "PASS", "AUTH"])}
         return {
