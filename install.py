@@ -29,7 +29,7 @@ def install_dependencies():
     step("📦 Installation des dépendances...")
     
     packages = [
-        "google-generativeai",
+        "google-genai",
         "mss",
         "Pillow",
         "pystray",

@@ -14,9 +14,6 @@ load_dotenv()
 # La clé est lue depuis le fichier .env (non partagé sur Git) ou une variable d'environnement
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# === CAPTURE ÉCRAN ===
-# Intervalle entre chaque analyse d'écran (en secondes)
-
 # === CAPTURE CAMÉRA ===
 # Active/désactive l'accès à la caméra
 ENABLE_CAMERA = True
@@ -34,15 +31,29 @@ ENABLE_MICROPHONE = True
 # Modèle Gemini à utiliser
 # On utilise le 3.1 Lite Preview qui a souvent des quotas plus larges
 # que les versions stables 2.x saturées.
-GEMINI_MODEL = "models/gemini-3.1-flash-lite"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "models/gemini-3.1-flash-lite")
+
+# Persona et objectif choisis lors de l'installation
+# Modifiable directement dans .env pour changer le comportement d'OMI sans réinstaller
+OMI_PERSONA = os.getenv("OMI_PERSONA", "developer")
+OMI_OBJECTIVE = os.getenv("OMI_OBJECTIVE", "")
 
 # Autoriser l'assistant à utiliser le clavier/souris sans demande explicite
 ALLOW_AUTONOMOUS_UI_INTERACTION = False
 
-# Prompt système : définit la personnalité de l'assistant
-SYSTEM_PROMPT = """Tu es OMI, un assistant IA omniscient et proactif.
-Tu observes l'écran de l'utilisateur, tu as accès à sa caméra, et tu as accès à son système de fichiers pour l'aider.
+# Bloc d'objectif personnalisé (défini lors de l'installation ou dans .env)
+_OBJECTIVE_BLOCK = ""
+if OMI_OBJECTIVE:
+    _OBJECTIVE_BLOCK = f"""
+### OBJECTIF PRINCIPAL (défini par l'utilisateur) :
+{OMI_OBJECTIVE}
+Cet objectif est ta priorité absolue dans toutes tes analyses et suggestions.
+"""
 
+# Prompt système : définit la personnalité de l'assistant
+SYSTEM_PROMPT = f"""Tu es OMI, un assistant IA omniscient et proactif.
+Tu observes l'écran de l'utilisateur, tu as accès à sa caméra, et tu as accès à son système de fichiers pour l'aider.
+{_OBJECTIVE_BLOCK}
 ### STYLE DE RÉPONSE (OBLIGATOIRE) :
 - PHRASES COURTES : Utilise des phrases simples, naturelles et directes.
 - CONCISION : Reste bref (1 à 2 phrases maximum).
@@ -112,3 +123,7 @@ POPUP_DURATION = 8000
 
 # === DÉMARRAGE WINDOWS ===
 APP_NAME = "OMI"
+
+# Chemin du profil utilisateur (créé automatiquement)
+# Pour réinitialiser le profil, supprime ce fichier
+PROFILE_PATH = "omi_profile.json"
