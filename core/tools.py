@@ -35,52 +35,45 @@ def get_user_profile() -> dict:
         return {"error": str(e)}
 
 
-def update_user_profile(section: str, key: str, value) -> dict:
+def update_user_profile(section: str, key: str, value: str = None, items: list[str] = None) -> dict:
     """Met à jour une information dans le profil de l'utilisateur.
 
-    - section : catégorie à modifier. Valeurs possibles :
-                'identity', 'work', 'habits', 'preferences', 'schedule'
-    - key     : nom du champ dans la section (ex: 'name', 'tech_stack', 'bad_habits')
-    - value   : nouvelle valeur. Pour les listes, passe la liste complète mise à jour.
-                Pour les champs texte, passe une chaîne.
+    - section : catégorie à modifier ('identity', 'work', 'habits', 'preferences', 'schedule', 'notes')
+    - key     : nom du champ (ex: 'name', 'tech_stack', 'bad_habits')
+    - value   : nouvelle valeur texte (pour les champs simples ou les notes)
+    - items   : nouvelle liste de valeurs (pour les champs de type liste comme tech_stack)
 
-    Exemples d'utilisation :
-    - Ajouter Python au stack : section='work', key='tech_stack', value=['Python', 'JavaScript']
-    - Noter une mauvaise habitude : section='habits', key='bad_habits', value=['se ronge les ongles']
-    - Enregistrer le prénom : section='identity', key='name', value='Thomas'
-    - Ajouter une note libre : section='notes', key='' (ignoré), value='Texte de la note'
-
-    Pour les notes libres, utilise section='notes' — la valeur est ajoutée avec horodatage.
+    Utilise soit 'value' (texte) soit 'items' (liste), selon le champ.
     """
     try:
         profile = load_profile()
+        final_value = items if items is not None else value
 
         if section == "notes":
             # Cas spécial : ajouter une note horodatée
-            note_text = str(value)
+            note_text = str(final_value)
             profile.setdefault("notes", []).append({
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "text": note_text
             })
-            # Limiter à 50 notes pour ne pas faire grossir indéfiniment
+            # Limiter à 50 notes
             profile["notes"] = profile["notes"][-50:]
             save_profile(profile)
             return {"status": f"Note ajoutée : {note_text[:60]}"}
 
         if section not in profile:
-            return {"error": f"Section '{section}' inconnue. Sections disponibles : identity, work, habits, preferences, schedule, notes"}
+            return {"error": f"Section '{section}' inconnue."}
 
-        # Pour les listes : fusionner au lieu d'écraser si la valeur est une liste
+        # Fusion pour les listes
         current = profile[section].get(key)
-        if isinstance(current, list) and isinstance(value, list):
-            # Dédoublonner et ajouter les nouveaux éléments
-            merged = list(dict.fromkeys(current + value))
+        if isinstance(current, list) and isinstance(final_value, list):
+            merged = list(dict.fromkeys(current + final_value))
             profile[section][key] = merged
         else:
-            profile[section][key] = value
+            profile[section][key] = final_value
 
         save_profile(profile)
-        return {"status": f"Profil mis à jour — {section}.{key} = {value}"}
+        return {"status": f"Profil mis à jour — {section}.{key} = {final_value}"}
 
     except Exception as e:
         return {"error": str(e)}
