@@ -37,6 +37,7 @@ from config import (
 
 from core.tools import TOOLS_LIST
 from core.database import add_transcript, query_transcripts
+from core.profile import get_profile_summary
 
 
 class Assistant:
@@ -80,6 +81,31 @@ TU ES UN ASSISTANT OBSERVATEUR. Ton rôle est d'aider l'utilisateur par des sugg
 - **Notifications** : Utilise `send_notification(title, message)` pour informer l'utilisateur.
 
 Tu es invisible, rapide, et efficace.
+"""
+
+        # Charger et injecter le profil existant dans le prompt initial
+        initial_profile = get_profile_summary()
+        if initial_profile:
+            enhanced_prompt += f"\n\n{initial_profile}"
+
+        enhanced_prompt += """
+
+### MÉMOIRE LONG TERME (CRITIQUE) :
+Tu avez accès à un profil persistant de l'utilisateur via les outils `get_user_profile` et `update_user_profile`.
+Ce profil survit aux redémarrages — c'est ta mémoire long terme.
+
+**Quand mettre à jour le profil :**
+- Tu apprends le prénom de l'utilisateur → `update_user_profile('identity', 'name', 'Prénom')`
+- Tu vois qu'il utilise un langage de programmation → `update_user_profile('work', 'tech_stack', [...])`
+- Tu observes une mauvaise habitude récurrente → `update_user_profile('habits', 'bad_habits', [...])`
+- Tu remarques un pattern de travail → `update_user_profile('schedule', 'most_productive_hours', [...])`
+- Tu veux noter une observation importante → `update_user_profile('notes', '', 'Observation...')`
+
+**Règles :**
+- Ne mets à jour que ce que tu as observé directement, pas ce que tu supposes.
+- Pour les listes (tech_stack, bad_habits, etc.), passe toujours la liste complète à jour.
+- Ne demande pas confirmation pour les mises à jour mineures (stack, apps fréquentes).
+- Consulte le profil avec `get_user_profile()` si l'utilisateur te pose une question sur lui-même.
 """
         
         self.chat_session = self.client.chats.create(
@@ -308,6 +334,9 @@ Tu es invisible, rapide, et efficace.
         """
         self._trim_chat_history_if_needed()
 
+        # Résumé du profil pour personnaliser les suggestions
+        profile_ctx = get_profile_summary()
+
         # Récupérer la fenêtre active une seule fois pour les deux méthodes
         try:
             from pywinauto import Desktop
@@ -328,6 +357,8 @@ Tu es invisible, rapide, et efficace.
                     truncated = f"\n[... document tronqué à {max_chars} caractères ...]"
 
                 prompt = (
+                    f"{profile_ctx}\n\n" if profile_ctx else ""
+                ) + (
                     f"Je travaille sur le fichier `{file_path}`.\n"
                     f"Voici son contenu complet :\n\n"
                     f"```\n{doc_content}{truncated}\n```\n\n"
@@ -342,6 +373,8 @@ Tu es invisible, rapide, et efficace.
 
                 if screen_text:
                     prompt = (
+                        f"{profile_ctx}\n\n" if profile_ctx else ""
+                    ) + (
                         f"Voici le contenu textuel de mon écran (extrait via l'arbre UI) :\n\n"
                         f"{screen_text}\n\n"
                         f"Analyse la situation. Si tu remarques des mauvaises habitudes "
@@ -352,6 +385,8 @@ Tu es invisible, rapide, et efficace.
                 else:
                     # --- Priorité 3 : écran visuel, envoi de l'image ---
                     prompt = (
+                        f"{profile_ctx}\n\n" if profile_ctx else ""
+                    ) + (
                         "Voici mon écran actuel"
                         + (" et une vue de ma caméra." if len(images) > 1 else ".")
                         + " Analyse la situation. Si tu remarques des mauvaises habitudes "
@@ -405,13 +440,18 @@ Tu es invisible, rapide, et efficace.
 
             recent = recent[start:]
 
+            profile_summary = get_profile_summary()
+            prompt_with_profile = self._enhanced_prompt
+            if profile_summary:
+                prompt_with_profile = self._enhanced_prompt + f"\n\n{profile_summary}"
+
             with self._lock:
                 self.chat_session = self.client.chats.create(
                     model=GEMINI_MODEL,
-                    config={"system_instruction": self._enhanced_prompt, "tools": TOOLS_LIST},
+                    config={"system_instruction": prompt_with_profile, "tools": TOOLS_LIST},
                     history=recent
                 )
-            print(f"[Chat] Historique taillé à {len(recent)} tours.")
+            print(f"[Chat] Historique taillé à {len(recent)} tours. Profil injecté.")
         except Exception as e:
             print(f"[Chat] Erreur trim historique : {e}")
             # En dernier recours, repartir d'une session vide

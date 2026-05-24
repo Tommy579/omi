@@ -1,7 +1,7 @@
 """
 OMI Installer GUI
 Ce script est compilé en OMI_Setup.exe.
-Il installe l'exécutable OmiAssistant.exe, configure la clé API et crée les raccourcis.
+Il installe l'exécutable OmiAssistant.exe, configure la clé API, l'objectif et crée les raccourcis.
 """
 
 import os
@@ -10,6 +10,87 @@ import shutil
 import tkinter as tk
 from tkinter import messagebox, ttk
 from pathlib import Path
+
+# --- CONFIGURATION VISUELLE ---
+BG = "#0A0A0A"
+SURFACE = "#161616"
+ACCENT = "#FFFFFF"
+FG_SEC = "#888888"
+BORDER = "#222222"
+
+# --- PERSONAS ---
+PERSONAS = [
+    {
+        "id": "developer",
+        "title": "Développeur",
+        "subtitle": "Aide au code, détection d'erreurs, optimisations, review",
+        "objective": (
+            "L'utilisateur est développeur. Tu dois surveiller son code en permanence : "
+            "détecter les erreurs, bugs, et mauvaises pratiques dès qu'ils apparaissent à l'écran. "
+            "Propose des corrections concrètes et courtes. Si tu vois un message d'erreur dans un terminal, "
+            "donne la cause et le fix immédiatement. Signale les opportunités d'optimisation dans le code ouvert. "
+            "Tu connais tous les langages de programmation et frameworks courants."
+        ),
+    },
+    {
+        "id": "student",
+        "title": "Étudiant",
+        "subtitle": "Concentration, aide aux devoirs, résumés, Pomodoro",
+        "objective": (
+            "L'utilisateur est étudiant. Ton rôle principal est de l'aider à rester concentré sur ses révisions. "
+            "Si tu le vois sur des réseaux sociaux ou des vidéos non liées à ses études, rappelle-le doucement à l'ordre. "
+            "Si tu vois un exercice, un QCM ou une question ouverte à l'écran, propose une réponse ou un indice. "
+            "Aide-le à résumer les documents qu'il lit. Suggère des pauses régulières (toutes les 45 minutes)."
+        ),
+    },
+    {
+        "id": "creative",
+        "title": "Créatif",
+        "subtitle": "Design, écriture, musique, feedback sur les créations",
+        "objective": (
+            "L'utilisateur est un créatif (designer, écrivain, musicien, vidéaste). "
+            "Donne-lui du feedback constructif sur ce que tu vois à l'écran : compositions visuelles, "
+            "textes en cours d'écriture, interfaces en design. Propose des idées, alternatives, sources d'inspiration. "
+            "Sois encourageant mais honnête. Si tu vois qu'il tourne en rond sur un même élément depuis un moment, "
+            "suggère de prendre du recul ou d'essayer une approche différente."
+        ),
+    },
+    {
+        "id": "manager",
+        "title": "Manager / Productivité",
+        "subtitle": "Emails, réunions, organisation, suivi des tâches",
+        "objective": (
+            "L'utilisateur travaille sur des tâches de management et productivité : emails, documents, "
+            "planification, réunions. Aide-le à rédiger des messages clairs et concis. Si tu vois un email "
+            "long à l'écran, propose un résumé ou une reformulation plus efficace. Rappelle-lui les deadlines "
+            "si tu les détectes dans ses documents. Signale si une réunion approche si tu vois son calendrier."
+        ),
+    },
+    {
+        "id": "streamer",
+        "title": "Streamer / Créateur de contenu",
+        "subtitle": "OBS, stream, YouTube, engagement, idées de contenu",
+        "objective": (
+            "L'utilisateur crée du contenu (streaming, YouTube, podcasts, réseaux sociaux). "
+            "Aide-le à surveiller son stream (alertes, chat visible à l'écran). Propose des idées de contenu "
+            "basées sur ses centres d'intérêt. Si tu vois OBS ou un logiciel de streaming à l'écran, "
+            "tu peux commenter la qualité de la mise en scène. Aide-le à rédiger des descriptions, titres, "
+            "et hashtags pour ses publications."
+        ),
+    },
+    {
+        "id": "custom",
+        "title": "Personnalisé",
+        "subtitle": "Décris toi-même ce que tu veux qu'OMI fasse",
+        "objective": None,  # Rempli par le champ libre
+    },
+]
+
+MODELS = [
+    ("Gemini 3.1 Flash Lite (Rapide, recommandé)", "models/gemini-3.1-flash-lite"),
+    ("Gemini 2.0 Flash (Équilibré)", "models/gemini-2.0-flash"),
+    ("Gemini 2.0 Pro (Performant)", "models/gemini-2.0-pro-exp-02-05")
+]
 
 def create_shortcut(target, shortcut_path, work_dir):
     """Crée un raccourci Windows via un script VBS temporaire"""
@@ -32,65 +113,222 @@ def create_shortcut(target, shortcut_path, work_dir):
 class InstallerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Installation de OMI")
-        self.root.geometry("500x400")
+        self.root.title("OMI Setup")
+        self.root.geometry("500x580")
         self.root.resizable(False, False)
-        
-        # Style
-        self.bg = "#f0f0f0"
-        self.root.configure(bg=self.bg)
-        
+        self.root.configure(bg=BG)
+
         # Variables
         self.api_key = tk.StringVar()
-        # Installation dans le dossier utilisateur pour éviter les problèmes de droits admin
+        self.selected_model = MODELS[0][1]
+        self.selected_persona_id = "developer"
+        self.custom_objective = tk.StringVar()
         self.install_path = Path(os.environ["LOCALAPPDATA"]) / "Programs" / "OMI"
         
-        self._build_ui()
+        # UI Setup
+        self.header_frame = tk.Frame(root, bg=BG, height=60)
+        self.header_frame.pack(fill="x")
+        
+        self.content_frame = tk.Frame(root, bg=BG, padx=40)
+        self.content_frame.pack(fill="both", expand=True)
 
-    def _build_ui(self):
-        # Header
-        header = tk.Frame(self.root, bg="#111111", height=80)
-        header.pack(fill="x")
-        tk.Label(header, text="OMI — Assistant IA", font=("Segoe UI", 16, "bold"), fg="white", bg="#111111").pack(pady=20)
+        self._build_step_welcome()
+
+    def _clear_content(self):
+        for widget in self.content_frame.winfo_children():
+            widget.destroy()
+
+    def _build_step_welcome(self):
+        self._clear_content()
         
-        # Content
-        content = tk.Frame(self.root, bg=self.bg, padx=30, pady=20)
-        content.pack(fill="both", expand=True)
+        tk.Label(self.content_frame, text="OMI", font=("Segoe UI", 32, "bold"), fg=ACCENT, bg=BG).pack(pady=(40, 10))
+        tk.Label(self.content_frame, text="Open Mind Interface", font=("Segoe UI", 12), fg=FG_SEC, bg=BG).pack()
         
-        tk.Label(content, text="Bienvenue dans l'installeur de OMI.", font=("Segoe UI", 10, "bold"), bg=self.bg).pack(anchor="w", pady=(0, 10))
+        desc = (
+            "OMI est ton assistant IA proactif.\n"
+            "Il observe ton écran pour t'aider en temps réel."
+        )
+        tk.Label(self.content_frame, text=desc, font=("Segoe UI", 10), fg=FG_SEC, bg=BG, pady=30).pack()
+
+        tk.Button(self.content_frame, text="Commencer la configuration →", 
+                  font=("Segoe UI", 11, "bold"), bg=ACCENT, fg=BG, bd=0, padx=20, pady=10, 
+                  cursor="hand2", command=self._build_step_model).pack(side="bottom", pady=40)
+
+    def _build_step_model(self):
+        self._clear_content()
+
+        tk.Label(self.content_frame, text="Configuration IA", font=("Segoe UI", 18, "bold"), fg=ACCENT, bg=BG).pack(pady=(20, 20))
         
-        tk.Label(content, text="Clé API Gemini :", font=("Segoe UI", 10), bg=self.bg).pack(anchor="w")
-        self.entry_key = tk.Entry(content, textvariable=self.api_key, font=("Segoe UI", 10), width=50)
-        self.entry_key.pack(pady=5)
+        tk.Label(self.content_frame, text="Clé API Gemini :", font=("Segoe UI", 10), fg=ACCENT, bg=BG).pack(anchor="w")
+        entry = tk.Entry(self.content_frame, textvariable=self.api_key, font=("Segoe UI", 10), 
+                         bg=SURFACE, fg=ACCENT, insertbackground=ACCENT, bd=0, highlightthickness=1, highlightbackground=BORDER)
+        entry.pack(fill="x", pady=(5, 2))
         
-        tk.Label(content, text="Obtiens ta clé gratuitement sur :", font=("Segoe UI", 8), bg=self.bg).pack(anchor="w")
-        link = tk.Label(content, text="https://aistudio.google.com/apikey", font=("Segoe UI", 8, "underline"), fg="blue", bg=self.bg, cursor="hand2")
-        link.pack(anchor="w")
+        link = tk.Label(self.content_frame, text="Obtenir une clé gratuite sur Google AI Studio", 
+                        font=("Segoe UI", 8, "underline"), fg=FG_SEC, bg=BG, cursor="hand2")
+        link.pack(anchor="w", pady=(0, 20))
         link.bind("<Button-1>", lambda e: os.startfile("https://aistudio.google.com/apikey"))
-        
-        tk.Label(content, text=f"\nL'application sera installée dans :\n{self.install_path}", 
-                 font=("Segoe UI", 9), bg=self.bg, justify="left").pack(anchor="w", pady=10)
-        
-        # Progress (hidden at start)
-        self.progress = ttk.Progressbar(content, orient="horizontal", length=400, mode="determinate")
-        
-        # Footer
-        footer = tk.Frame(self.root, bg=self.bg, pady=20)
-        footer.pack(fill="x")
-        
-        self.btn_install = tk.Button(footer, text="Installer maintenant", font=("Segoe UI", 10, "bold"), 
-                                     bg="#111111", fg="white", padx=20, pady=5, command=self.install)
-        self.btn_install.pack()
 
-    def install(self):
+        tk.Label(self.content_frame, text="Modèle Gemini :", font=("Segoe UI", 10), fg=ACCENT, bg=BG).pack(anchor="w")
+        
+        self.model_var = tk.StringVar(value=MODELS[0][0])
+        model_menu = tk.OptionMenu(self.content_frame, self.model_var, *[m[0] for m in MODELS], command=self._on_model_change)
+        model_menu.config(bg=SURFACE, fg=ACCENT, bd=0, highlightthickness=1, highlightbackground=BORDER, font=("Segoe UI", 9))
+        model_menu["menu"].config(bg=SURFACE, fg=ACCENT)
+        model_menu.pack(fill="x", pady=5)
+
+        # Boutons
+        btn_frame = tk.Frame(self.content_frame, bg=BG)
+        btn_frame.pack(side="bottom", fill="x", pady=20)
+        
+        tk.Button(btn_frame, text="Continuer →", font=("Segoe UI", 11, "bold"), bg=ACCENT, fg=BG, bd=0, padx=20, pady=10, 
+                  cursor="hand2", command=self._build_step_persona).pack(side="right")
+
+    def _on_model_change(self, val):
+        self.selected_model = next(m[1] for m in MODELS if m[0] == val)
+
+    def _build_step_persona(self):
+        """Étape 2b : Choix de l'objectif d'OMI."""
+        self._clear_content()
+
+        tk.Label(self.content_frame, text="À quoi doit servir OMI ?",
+                 font=("Segoe UI", 16, "bold"), fg=ACCENT, bg=BG).pack(pady=(0, 4))
+        tk.Label(self.content_frame,
+                 text="Adapte le comportement d'OMI à ton usage principal.",
+                 font=("Segoe UI", 10), fg=FG_SEC, bg=BG).pack(pady=(0, 16))
+
+        self._persona_cards = {}
+        cards_frame = tk.Frame(self.content_frame, bg=BG)
+        cards_frame.pack(fill="x")
+
+        for persona in PERSONAS:
+            card = tk.Canvas(cards_frame, bg=BG, highlightthickness=0,
+                             height=56, cursor="hand2")
+            card.pack(fill="x", pady=3)
+
+            is_selected = persona["id"] == self.selected_persona_id
+            self._draw_persona_card(card, persona, is_selected)
+            card.bind("<Button-1>", lambda e, p=persona, c=card: self._select_persona(p, c))
+            self._persona_cards[persona["id"]] = card
+
+        # Champ libre (visible uniquement si "custom" sélectionné)
+        self.custom_frame = tk.Frame(self.content_frame, bg=BG)
+        tk.Label(self.custom_frame, text="Décris l'objectif d'OMI :",
+                 font=("Segoe UI", 10), fg=FG_SEC, bg=BG).pack(anchor="w", pady=(8, 2))
+        self.custom_entry_text = tk.Text(self.custom_frame, font=("Segoe UI", 10),
+                               bg=SURFACE, fg=ACCENT, insertbackground=ACCENT,
+                               bd=0, highlightthickness=1, highlightbackground=BORDER,
+                               height=4, wrap="word")
+        self.custom_entry_text.pack(fill="x")
+        self.custom_entry_text.bind("<KeyRelease>",
+                          lambda e: self.custom_objective.set(self.custom_entry_text.get("1.0", "end-1c")))
+
+        if self.selected_persona_id == "custom":
+            self.custom_frame.pack(fill="x", pady=(4, 0))
+
+        # Boutons
+        btn_frame = tk.Frame(self.content_frame, bg=BG)
+        btn_frame.pack(side="bottom", fill="x", pady=(16, 0))
+
+        tk.Label(btn_frame, text="← Retour", font=("Segoe UI", 10),
+                 fg=FG_SEC, bg=BG, cursor="hand2").pack(side="left")
+        btn_frame.winfo_children()[0].bind("<Button-1>", lambda e: self._build_step_model())
+
+        tk.Button(btn_frame, text="Continuer →",
+                  font=("Segoe UI", 11, "bold"),
+                  bg=ACCENT, fg=BG, bd=0, padx=20, pady=8,
+                  cursor="hand2",
+                  command=self._on_persona_next).pack(side="right")
+
+
+    def _draw_persona_card(self, canvas, persona, selected):
+        """Dessine une carte de persona sur le canvas."""
+        canvas.delete("all")
+        # Forcer un rendu pour avoir la largeur réelle
+        canvas.update()
+        w = canvas.winfo_width() or 420
+        h = 54
+        bg_color = "#222222" if selected else SURFACE
+        border_color = ACCENT if selected else BORDER
+        border_w = 2 if selected else 1
+
+        # Fond arrondi
+        pts = [
+            8, 0,   w-8, 0,
+            w, 0,   w, 8,
+            w, h-8, w, h,
+            w-8, h, 8, h,
+            0, h,   0, h-8,
+            0, 8,   0, 0,
+        ]
+        canvas.create_polygon(pts, smooth=True, fill=bg_color,
+                              outline=border_color, width=border_w)
+
+        # Indicateur sélection
+        dot_color = ACCENT if selected else "#444444"
+        canvas.create_oval(16, 19, 28, 31, fill=dot_color, outline="")
+
+        # Texte
+        canvas.create_text(44, 18, text=persona["title"],
+                           font=("Segoe UI", 10, "bold"),
+                           fill=ACCENT if selected else "#CCCCCC",
+                           anchor="w")
+        canvas.create_text(44, 36, text=persona["subtitle"],
+                           font=("Segoe UI", 9),
+                           fill=FG_SEC,
+                           anchor="w")
+
+
+    def _select_persona(self, persona, clicked_card):
+        """Sélectionne un persona et redessine toutes les cartes."""
+        self.selected_persona_id = persona["id"]
+        for pid, card in self._persona_cards.items():
+            p = next(p for p in PERSONAS if p["id"] == pid)
+            self._draw_persona_card(card, p, pid == self.selected_persona_id)
+
+        # Afficher/masquer le champ custom
+        if persona["id"] == "custom":
+            self.custom_frame.pack(fill="x", pady=(4, 0))
+        else:
+            self.custom_frame.pack_forget()
+
+
+    def _on_persona_next(self):
+        """Valide la sélection du persona et passe à l'installation."""
+        if self.selected_persona_id == "custom":
+            obj = self.custom_objective.get().strip()
+            if len(obj) < 20:
+                messagebox.showwarning("Objectif trop court", "Merci de décrire ton objectif en au moins 20 caractères.")
+                return
+        self._build_step_install()
+
+    def _build_step_install(self):
+        self._clear_content()
+
+        tk.Label(self.content_frame, text="Prêt pour l'installation", font=("Segoe UI", 18, "bold"), fg=ACCENT, bg=BG).pack(pady=(40, 10))
+        
+        info = (
+            f"Clé API : {'Définie' if self.api_key.get() else 'Manquante'}\n"
+            f"Modèle : {self.selected_model.split('/')[-1]}\n"
+            f"Persona : {self.selected_persona_id}\n\n"
+            f"Installation dans :\n{self.install_path}"
+        )
+        tk.Label(self.content_frame, text=info, font=("Segoe UI", 10), fg=FG_SEC, bg=BG, justify="left").pack(pady=20)
+
+        self.progress = ttk.Progressbar(self.content_frame, orient="horizontal", length=300, mode="determinate")
+        self.progress.pack(pady=20)
+
+        self.btn_install = tk.Button(self.content_frame, text="Installer maintenant", font=("Segoe UI", 11, "bold"), 
+                                     bg=ACCENT, fg=BG, bd=0, padx=20, pady=10, cursor="hand2", command=self.run_installation)
+        self.btn_install.pack(side="bottom", pady=40)
+
+    def run_installation(self):
         key = self.api_key.get().strip()
         if not key.startswith("AIza"):
             if not messagebox.askyesno("Attention", "La clé API semble incorrecte. Continuer ?"):
                 return
         
         self.btn_install.config(state="disabled")
-        self.entry_key.config(state="disabled")
-        self.progress.pack(pady=10)
         self.root.update()
 
         try:
@@ -101,15 +339,16 @@ class InstallerApp:
 
             # 2. Dossier source (fichiers embarqués dans le Setup.exe)
             source_dir = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
-            
             exe_name = "OmiAssistant.exe"
             icon_name = "omi_icon.ico"
 
-            # 3. Copier l'exécutable de l'assistant
+            # 3. Copier l'exécutable et l'icône
             if (source_dir / exe_name).exists():
                 shutil.copy2(source_dir / exe_name, self.install_path / exe_name)
             else:
-                raise FileNotFoundError(f"Impossible de trouver {exe_name} dans le package d'installation.")
+                # Fallback pour le dev si on lance le script tel quel
+                if Path("dist/OmiAssistant.exe").exists():
+                    shutil.copy2("dist/OmiAssistant.exe", self.install_path / exe_name)
 
             if (source_dir / icon_name).exists():
                 shutil.copy2(source_dir / icon_name, self.install_path / icon_name)
@@ -117,43 +356,45 @@ class InstallerApp:
             self.progress['value'] = 60
             self.root.update()
 
-            # 4. Créer le fichier .env avec la clé fournie
-            env_file = self.install_path / ".env"
-            env_file.write_text(f"GEMINI_API_KEY={key}\n", encoding="utf-8")
+            # 4. Écrire le fichier .env
+            # Résoudre l'objectif selon le persona sélectionné
+            if self.selected_persona_id == "custom":
+                objective = self.custom_objective.get().strip()
+            else:
+                persona = next(p for p in PERSONAS if p["id"] == self.selected_persona_id)
+                objective = persona["objective"]
 
-            # 5. Créer les raccourcis
+            env_content = (
+                f"GEMINI_API_KEY={key}\n"
+                f"GEMINI_MODEL={self.selected_model}\n"
+                f"OMI_PERSONA={self.selected_persona_id}\n"
+                f"OMI_OBJECTIVE={objective}\n"
+            )
+            (self.install_path / ".env").write_text(env_content, encoding="utf-8")
+
+            # 5. Raccourcis
             desktop = Path(os.path.join(os.environ['USERPROFILE'], 'Desktop'))
             start_menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
             
             target_exe = self.install_path / exe_name
             
             create_shortcut(str(target_exe), desktop / "OMI.lnk", str(self.install_path))
             create_shortcut(str(target_exe), start_menu / "OMI.lnk", str(self.install_path))
-
-            # 6. Optionnel : Ajout au démarrage automatique (Registry ou dossier Startup)
-            startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
             create_shortcut(str(target_exe), startup_dir / "OMI.lnk", str(self.install_path))
 
             self.progress['value'] = 100
             self.root.update()
             
-            messagebox.showinfo("Succès", "OMI a été installé !\n\nL'assistant se lancera automatiquement au démarrage.\nTu peux aussi le lancer depuis le raccourci sur ton bureau.")
-            
-            # Lancer l'appli immédiatement
+            messagebox.showinfo("Succès", "OMI a été installé !\n\nL'assistant se lancera automatiquement au démarrage.")
             os.startfile(target_exe)
             self.root.destroy()
 
         except Exception as e:
-            messagebox.showerror("Erreur d'installation", f"Détails : {e}")
+            messagebox.showerror("Erreur", f"L'installation a échoué : {e}")
             self.btn_install.config(state="normal")
-            self.entry_key.config(state="normal")
 
 if __name__ == "__main__":
     root = tk.Tk()
-    # Icône de la fenêtre si dispo
-    source_dir = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
-    if (source_dir / "omi_icon.ico").exists():
-        root.iconbitmap(str(source_dir / "omi_icon.ico"))
-    
     app = InstallerApp(root)
     root.mainloop()
