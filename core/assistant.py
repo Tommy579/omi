@@ -95,18 +95,18 @@ Tu avez accès à un profil persistant de l'utilisateur via les outils `get_user
 Ce profil survit aux redémarrages — c'est ta mémoire long terme.
 
 **Quand mettre à jour le profil :**
-- Tu apprends le prénom de l'utilisateur → `update_user_profile('identity', 'name', 'Prénom')`
-- Tu vois qu'il utilise un langage de programmation → `update_user_profile('work', 'tech_stack', [...])`
-- Tu observes une mauvaise habitude récurrente → `update_user_profile('habits', 'bad_habits', [...])`
-- Tu remarques un pattern de travail → `update_user_profile('schedule', 'most_productive_hours', [...])`
-- Tu veux noter une observation importante → `update_user_profile('notes', '', 'Observation...')`
+- Tu apprends le prénom de l'utilisateur → `update_user_profile(section='identity', key='name', value='Prénom')`
+- Tu vois qu'il utilise un langage de programmation → `update_user_profile(section='work', key='tech_stack', items=[...])`
+- Tu observes une mauvaise habitude récurrente → `update_user_profile(section='habits', key='bad_habits', items=[...])`
+- Tu remarques un pattern de travail → `update_user_profile(section='schedule', key='most_productive_hours', items=[...])`
+- Tu veux noter une observation importante → `update_user_profile(section='notes', value='Observation...')`
 
 **Règles :**
 - Ne mets à jour que ce que tu as observé directement, pas ce que tu supposes.
-- Pour les listes (tech_stack, bad_habits, etc.), passe toujours la liste complète à jour.
+- Pour les listes (tech_stack, bad_habits, etc.), utilise toujours `items` avec la liste complète à jour.
+- Pour les notes et les champs simples (nom), utilise `value`.
 - Ne demande pas confirmation pour les mises à jour mineures (stack, apps fréquentes).
-- Consulte le profil avec `get_user_profile()` si l'utilisateur te pose une question sur lui-même.
-"""
+- Consulte le profil avec `get_user_profile()` si l'utilisateur te pose une question sur lui-même."""
         
         self.chat_session = self.client.chats.create(
             model=GEMINI_MODEL,
