@@ -327,12 +327,26 @@ class InstallerApp:
         if not key.startswith("AIza"):
             if not messagebox.askyesno("Attention", "La clé API semble incorrecte. Continuer ?"):
                 return
-        
+
         self.btn_install.config(state="disabled")
         self.root.update()
 
         try:
-            # 1. Créer le dossier d'installation
+            # 1. Préparation du dossier (Nettoyage intelligent)
+            if self.install_path.exists():
+                # On ne supprime pas tout le dossier pour garder le .json et le .env
+                # On supprime seulement les anciens binaires et dossiers temporaires
+                for item in self.install_path.iterdir():
+                    if item.name in ["omi_profile.json", ".env", "omi_history.db"]:
+                        continue # Préserver la mémoire et la config
+                    try:
+                        if item.is_file():
+                            item.unlink()
+                        elif item.is_dir():
+                            shutil.rmtree(item)
+                    except Exception as e:
+                        print(f"Impossible de supprimer {item.name}: {e}")
+
             os.makedirs(self.install_path, exist_ok=True)
             self.progress['value'] = 20
             self.root.update()
@@ -352,48 +366,57 @@ class InstallerApp:
 
             if (source_dir / icon_name).exists():
                 shutil.copy2(source_dir / icon_name, self.install_path / icon_name)
-            
+
             self.progress['value'] = 60
             self.root.update()
 
-            # 4. Écrire le fichier .env
-            # Résoudre l'objectif selon le persona sélectionné
-            if self.selected_persona_id == "custom":
-                objective = self.custom_objective.get().strip()
-            else:
-                persona = next(p for p in PERSONAS if p["id"] == self.selected_persona_id)
-                objective = persona["objective"]
+            # 4. Gérer le fichier .env (préserver ou créer)
+            env_file = self.install_path / ".env"
+            if not env_file.exists():
+                # Résoudre l'objectif selon le persona sélectionné
+                if self.selected_persona_id == "custom":
+                    objective = self.custom_objective.get().strip()
+                else:
+                    persona = next(p for p in PERSONAS if p["id"] == self.selected_persona_id)
+                    objective = persona["objective"]
 
-            env_content = (
-                f"GEMINI_API_KEY={key}\n"
-                f"GEMINI_MODEL={self.selected_model}\n"
-                f"OMI_PERSONA={self.selected_persona_id}\n"
-                f"OMI_OBJECTIVE={objective}\n"
-            )
-            (self.install_path / ".env").write_text(env_content, encoding="utf-8")
+                env_content = (
+                    f"GEMINI_API_KEY={key}\n"
+                    f"GEMINI_MODEL={self.selected_model}\n"
+                    f"OMI_PERSONA={self.selected_persona_id}\n"
+                    f"OMI_OBJECTIVE={objective}\n"
+                )
+                env_file.write_text(env_content, encoding="utf-8")
+            else:
+                # Mettre à jour seulement la clé si elle a changé dans l'installeur
+                old_content = env_file.read_text(encoding="utf-8")
+                if key and key not in old_content:
+                    # Remplacement simple de la clé
+                    import re
+                    new_content = re.sub(r"GEMINI_API_KEY=.*", f"GEMINI_API_KEY={key}", old_content)
+                    env_file.write_text(new_content, encoding="utf-8")
 
             # 5. Raccourcis
             desktop = Path(os.path.join(os.environ['USERPROFILE'], 'Desktop'))
-            start_menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            start_menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"     
             startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
-            
+
             target_exe = self.install_path / exe_name
-            
+
             create_shortcut(str(target_exe), desktop / "OMI.lnk", str(self.install_path))
             create_shortcut(str(target_exe), start_menu / "OMI.lnk", str(self.install_path))
             create_shortcut(str(target_exe), startup_dir / "OMI.lnk", str(self.install_path))
 
             self.progress['value'] = 100
             self.root.update()
-            
-            messagebox.showinfo("Succès", "OMI a été installé !\n\nL'assistant se lancera automatiquement au démarrage.")
+
+            messagebox.showinfo("Succès", "OMI a été mis à jour !\n\nL'assistant se lancera automatiquement au démarrage.\nTes données et ton profil ont été conservés.")
             os.startfile(target_exe)
             self.root.destroy()
 
         except Exception as e:
             messagebox.showerror("Erreur", f"L'installation a échoué : {e}")
             self.btn_install.config(state="normal")
-
 if __name__ == "__main__":
     root = tk.Tk()
     app = InstallerApp(root)
