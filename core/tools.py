@@ -10,6 +10,7 @@ import io
 import psutil
 import pyperclip
 import pyodbc
+from datetime import datetime
 from pathlib import Path
 from PIL import Image
 
@@ -23,6 +24,66 @@ import comtypes.client
 
 from config import SCREEN_CAPTURE_SIZE, ALLOW_AUTONOMOUS_UI_INTERACTION
 from core.database import DB_PATH, query_transcripts, search_transcripts
+from core.profile import load_profile, save_profile
+
+def get_user_profile() -> dict:
+    """Lit le profil complet de l'utilisateur — tout ce qu'OMI a appris sur lui jusqu'ici.
+    Utilise cet outil pour personnaliser tes suggestions ou retrouver des informations connues."""
+    try:
+        return load_profile()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def update_user_profile(section: str, key: str, value) -> dict:
+    """Met à jour une information dans le profil de l'utilisateur.
+
+    - section : catégorie à modifier. Valeurs possibles :
+                'identity', 'work', 'habits', 'preferences', 'schedule'
+    - key     : nom du champ dans la section (ex: 'name', 'tech_stack', 'bad_habits')
+    - value   : nouvelle valeur. Pour les listes, passe la liste complète mise à jour.
+                Pour les champs texte, passe une chaîne.
+
+    Exemples d'utilisation :
+    - Ajouter Python au stack : section='work', key='tech_stack', value=['Python', 'JavaScript']
+    - Noter une mauvaise habitude : section='habits', key='bad_habits', value=['se ronge les ongles']
+    - Enregistrer le prénom : section='identity', key='name', value='Thomas'
+    - Ajouter une note libre : section='notes', key='' (ignoré), value='Texte de la note'
+
+    Pour les notes libres, utilise section='notes' — la valeur est ajoutée avec horodatage.
+    """
+    try:
+        profile = load_profile()
+
+        if section == "notes":
+            # Cas spécial : ajouter une note horodatée
+            note_text = str(value)
+            profile.setdefault("notes", []).append({
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "text": note_text
+            })
+            # Limiter à 50 notes pour ne pas faire grossir indéfiniment
+            profile["notes"] = profile["notes"][-50:]
+            save_profile(profile)
+            return {"status": f"Note ajoutée : {note_text[:60]}"}
+
+        if section not in profile:
+            return {"error": f"Section '{section}' inconnue. Sections disponibles : identity, work, habits, preferences, schedule, notes"}
+
+        # Pour les listes : fusionner au lieu d'écraser si la valeur est une liste
+        current = profile[section].get(key)
+        if isinstance(current, list) and isinstance(value, list):
+            # Dédoublonner et ajouter les nouveaux éléments
+            merged = list(dict.fromkeys(current + value))
+            profile[section][key] = merged
+        else:
+            profile[section][key] = value
+
+        save_profile(profile)
+        return {"status": f"Profil mis à jour — {section}.{key} = {value}"}
+
+    except Exception as e:
+        return {"error": str(e)}
 
 def get_ui_tree(window_title: str = None):
     """Récupère la structure textuelle d'une fenêtre (boutons, textes, etc.). 
@@ -503,5 +564,7 @@ TOOLS_LIST = [
     get_network_connections,
     get_machine_info,
     get_windows_event_logs,
-    send_notification
+    send_notification,
+    get_user_profile,
+    update_user_profile
 ]
