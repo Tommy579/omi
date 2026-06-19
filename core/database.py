@@ -15,6 +15,14 @@ def init_db():
             text      TEXT
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            type      TEXT,
+            content   TEXT
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -46,5 +54,29 @@ def search_transcripts(query):
     rows = cursor.fetchall()
     conn.close()
     return rows
+
+def add_chat_history(msg_type, content):
+    if not content.strip():
+        return
+    local_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        'INSERT INTO chat_history (timestamp, type, content) VALUES (?, ?, ?)',
+        (local_now, msg_type, content)
+    )
+    conn.commit()
+    conn.close()
+
+def load_chat_history(limit=50):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('SELECT type, content FROM chat_history ORDER BY id DESC LIMIT ?', (limit,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [{"type": r[0], "content": r[1]} for r in reversed(rows)]
+    except Exception:
+        return []
 
 init_db()

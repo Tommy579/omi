@@ -422,6 +422,13 @@ class PopupWindow:
         self._append("OMI", self._last_status, "sender_omi", "text_omi")
         threading.Thread(target=self._do_chat, args=(msg,), daemon=True).start()
 
+    def trigger_vocal_chat(self, query):
+        self.show()
+        self._append("VOUS (VOIX)", query, "sender_you", "text_you")
+        self._last_status = "Réflexion en cours..."
+        self._append("OMI", self._last_status, "sender_omi", "text_omi")
+        threading.Thread(target=self._do_chat, args=(query,), daemon=True).start()
+
     def _do_chat(self, msg):
         response = self.assistant.chat(msg, status_callback=self._update_chat_status)
         if self.window and self.window.winfo_exists():
@@ -544,6 +551,7 @@ class TrayApp:
         self.popup = PopupWindow(self.assistant, self._root)
         self.assistant.on_suggestion_callback = self._on_new_suggestion
         self.assistant.on_transcript_callback = self._on_new_transcript
+        self.assistant.on_vocal_query_callback = self._on_vocal_query
 
         # Lancer la surveillance du thème Windows
         self._check_theme_loop()
@@ -579,6 +587,10 @@ class TrayApp:
     def _on_new_transcript(self, text):
         if self.popup and self.popup.window and self.popup.window.winfo_exists():
             self._root.after(0, lambda: self.popup._add_transcript_to_ui(text))
+
+    def _on_vocal_query(self, query):
+        if self.popup:
+            self._root.after(0, lambda: self.popup.trigger_vocal_chat(query))
 
     def _quit(self, icon, item):
         self.assistant.stop()

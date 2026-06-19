@@ -591,3 +591,54 @@ TOOLS_LIST = [
     get_user_profile,
     update_user_profile
 ]
+
+
+def get_active_app_name() -> str:
+    """Récupère de façon cross-platform le nom exact de l'exécutable actif."""
+    try:
+        import psutil
+        if os.name == 'nt':
+            try:
+                import win32gui
+                import win32process
+                hwnd = win32gui.GetForegroundWindow()
+                if hwnd:
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    if pid:
+                        return psutil.Process(pid).name()
+            except Exception:
+                pass
+        else:
+            try:
+                import subprocess
+                pid_out = subprocess.check_output(["xdotool", "getactivewindow", "getwindowpid"], stderr=subprocess.DEVNULL)
+                pid = int(pid_out.strip())
+                if pid:
+                    return psutil.Process(pid).name()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return "Unknown"
+
+
+def send_message_with_retry(session, prompt, images=None, max_retries=3):
+    """Envoie un message à Gemini avec retry exponentiel en cas d'erreur de quota (429)."""
+    import time
+    delay = 1.0
+    for attempt in range(max_retries):
+        try:
+            if images:
+                return session.send_message([prompt] + images)
+            else:
+                return session.send_message(prompt)
+        except Exception as e:
+            err_str = str(e).lower()
+            if "429" in err_str or "resource_exhausted" in err_str or "exhausted" in err_str or "quota" in err_str:
+                if attempt == max_retries - 1:
+                    raise e
+                print(f"[Gemini] Quota dépassé (429), nouvel essai dans {delay}s...")
+                time.sleep(delay)
+                delay *= 2.0
+            else:
+                raise e

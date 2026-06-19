@@ -393,14 +393,14 @@ class InstallerApp:
 
             # 4. Gérer le fichier .env (préserver ou créer)
             env_file = self.install_path / ".env"
-            if not env_file.exists():
-                # Résoudre l'objectif selon le persona sélectionné
-                if self.selected_persona_id == "custom":
-                    objective = self.custom_objective.get().strip()
-                else:
-                    persona = next(p for p in PERSONAS if p["id"] == self.selected_persona_id)
-                    objective = persona["objective"]
+            
+            # Résoudre l'objectif selon le persona sélectionné
+            if self.selected_persona_id == "custom":
+                objective = self.custom_objective.get().strip()
+            else:
+                objective = next(p for p in PERSONAS if p["id"] == self.selected_persona_id)["objective"]
 
+            if not env_file.exists():
                 env_content = (
                     f"GEMINI_API_KEY={key}\n"
                     f"GEMINI_MODEL={self.selected_model}\n"
@@ -409,13 +409,35 @@ class InstallerApp:
                 )
                 env_file.write_text(env_content, encoding="utf-8")
             else:
-                # Mettre à jour seulement la clé si elle a changé dans l'installeur
+                # Mettre à jour les variables dans le .env existant si elles sont définies/changées
+                import re
                 old_content = env_file.read_text(encoding="utf-8")
-                if key and key not in old_content:
-                    # Remplacement simple de la clé
-                    import re
-                    new_content = re.sub(r"GEMINI_API_KEY=.*", f"GEMINI_API_KEY={key}", old_content)
-                    env_file.write_text(new_content, encoding="utf-8")
+                new_content = old_content
+                
+                if key:
+                    if "GEMINI_API_KEY=" in new_content:
+                        new_content = re.sub(r"GEMINI_API_KEY=.*", f"GEMINI_API_KEY={key}", new_content)
+                    else:
+                        new_content += f"\nGEMINI_API_KEY={key}"
+                
+                if self.selected_model:
+                    if "GEMINI_MODEL=" in new_content:
+                        new_content = re.sub(r"GEMINI_MODEL=.*", f"GEMINI_MODEL={self.selected_model}", new_content)
+                    else:
+                        new_content += f"\nGEMINI_MODEL={self.selected_model}"
+                
+                if self.selected_persona_id:
+                    if "OMI_PERSONA=" in new_content:
+                        new_content = re.sub(r"OMI_PERSONA=.*", f"OMI_PERSONA={self.selected_persona_id}", new_content)
+                    else:
+                        new_content += f"\nOMI_PERSONA={self.selected_persona_id}"
+                    
+                    if "OMI_OBJECTIVE=" in new_content:
+                        new_content = re.sub(r"OMI_OBJECTIVE=.*", f"OMI_OBJECTIVE={objective}", new_content)
+                    else:
+                        new_content += f"\nOMI_OBJECTIVE={objective}"
+                
+                env_file.write_text(new_content, encoding="utf-8")
 
             # 5. Raccourcis
             if sys.platform == "win32":
