@@ -10,13 +10,18 @@ import tkinter as tk
 from tkinter import scrolledtext
 import pystray
 from PIL import Image, ImageDraw
-import winreg
+try:
+    import winreg
+except ImportError:
+    winreg = None
 
 # ─────────────────────────────────────────────────────────
 # Thème
 # ─────────────────────────────────────────────────────────
 
 def get_windows_theme():
+    if not winreg:
+        return "dark"
     try:
         reg = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
         key = winreg.OpenKey(reg, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
@@ -105,10 +110,18 @@ class OverlayWindow:
             self.window = tk.Toplevel(self.root)
             self.window.overrideredirect(True)
             self.window.attributes("-topmost", True)
-            self.window.attributes("-transparentcolor", CHROMA)
-            self.window.config(bg=CHROMA)
-            # Désactiver le focus pour que ce soit vraiment un filigrane
-            self.window.attributes("-disabled", True)
+            if winreg is not None:
+                self.window.attributes("-transparentcolor", CHROMA)
+                self.window.config(bg=CHROMA)
+                self.window.attributes("-disabled", True)
+            else:
+                theme = get_windows_theme()
+                bg_color = THEMES[theme]["bg"]
+                self.window.config(bg=bg_color)
+                try:
+                    self.window.attributes("-alpha", 0.8)
+                except Exception:
+                    pass
             self._draw()
 
     def _draw(self):
@@ -119,8 +132,11 @@ class OverlayWindow:
         # Limité à environ 3-4 cm (300px) et 3 lignes
         display_text = self.text
         
-        lbl = tk.Label(self.window, text=display_text, font=("Segoe UI", 11),
-                       fg="#888888", bg=CHROMA, justify="right", anchor="e",
+        theme = get_windows_theme()
+        bg_color = CHROMA if winreg is not None else THEMES[theme]["bg"]
+        font_name = "Segoe UI" if winreg is not None else "DejaVu Sans"
+        lbl = tk.Label(self.window, text=display_text, font=(font_name, 11),
+                       fg="#888888", bg=bg_color, justify="right", anchor="e",
                        wraplength=280) # wraplength limite la largeur du texte
         lbl.pack(padx=10, pady=10)
         
@@ -218,8 +234,11 @@ class PopupWindow:
         # ── Radius global via transparentcolor ──────────────
         # Le fond de la fenêtre est CHROMA (couleur invisible)
         # On dessine un rectangle arrondi par-dessus : les coins restent transparents
-        win.configure(bg=CHROMA)
-        win.attributes("-transparentcolor", CHROMA)
+        if winreg is not None:
+            win.configure(bg=CHROMA)
+            win.attributes("-transparentcolor", CHROMA)
+        else:
+            win.configure(bg=t["bg"])
 
         # Position bas-droite
         sw = win.winfo_screenwidth()
@@ -227,8 +246,9 @@ class PopupWindow:
         win.geometry(f"{W}x{H}+{sw - W - 16}+{sh - H - 52}")
 
         # Canvas principal qui couvre toute la fenêtre
+        bg_color = CHROMA if winreg is not None else t["bg"]
         root_canvas = tk.Canvas(win, width=W, height=H,
-                                bg=CHROMA, highlightthickness=0, bd=0)
+                                bg=bg_color, highlightthickness=0, bd=0)
         root_canvas.place(x=0, y=0)
 
         # Rectangle arrondi = fond réel de la fenêtre

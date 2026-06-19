@@ -93,20 +93,36 @@ MODELS = [
 ]
 
 def create_shortcut(target, shortcut_path, work_dir):
-    """Crée un raccourci Windows via un script VBS temporaire"""
+    """Crée un raccourci (Windows Lnk ou Linux Desktop)"""
     try:
-        vbs = (
-            f'Set oWS = WScript.CreateObject("WScript.Shell")\n'
-            f'sLinkFile = "{shortcut_path}"\n'
-            f'Set oLink = oWS.CreateShortcut(sLinkFile)\n'
-            f'oLink.TargetPath = "{target}"\n'
-            f'oLink.WorkingDirectory = "{work_dir}"\n'
-            f'oLink.Save'
-        )
-        vbs_path = Path(os.environ["TEMP"]) / "shortcut.vbs"
-        vbs_path.write_text(vbs, encoding="cp1252")
-        os.system(f'cscript //nologo "{vbs_path}"')
-        os.remove(vbs_path)
+        if sys.platform == "win32":
+            vbs = (
+                f'Set oWS = WScript.CreateObject("WScript.Shell")\n'
+                f'sLinkFile = "{shortcut_path}"\n'
+                f'Set oLink = oWS.CreateShortcut(sLinkFile)\n'
+                f'oLink.TargetPath = "{target}"\n'
+                f'oLink.WorkingDirectory = "{work_dir}"\n'
+                f'oLink.Save'
+            )
+            vbs_path = Path(os.environ["TEMP"]) / "shortcut.vbs"
+            vbs_path.write_text(vbs, encoding="cp1252")
+            os.system(f'cscript //nologo "{vbs_path}"')
+            os.remove(vbs_path)
+        else:
+            desktop_entry = (
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "Name=OMI\n"
+                f"Exec=\"{target}\"\n"
+                f"Path={work_dir}\n"
+                "Icon=omi_icon\n"
+                "Terminal=false\n"
+                "Categories=Utility;Application;\n"
+            )
+            shortcut_path = Path(shortcut_path)
+            shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+            shortcut_path.write_text(desktop_entry, encoding="utf-8")
+            os.chmod(shortcut_path, 0o755)
     except Exception as e:
         print(f"Erreur raccourci : {e}")
 
@@ -123,7 +139,10 @@ class InstallerApp:
         self.selected_model = MODELS[0][1]
         self.selected_persona_id = "developer"
         self.custom_objective = tk.StringVar()
-        self.install_path = Path(os.environ["LOCALAPPDATA"]) / "Programs" / "OMI"
+        if sys.platform == "win32":
+            self.install_path = Path(os.environ.get("LOCALAPPDATA", "~/.local/share")) / "Programs" / "OMI"
+        else:
+            self.install_path = Path.home() / ".local" / "share" / "omi"
         
         # UI Setup
         self.header_frame = tk.Frame(root, bg=BG, height=60)
@@ -167,7 +186,8 @@ class InstallerApp:
         link = tk.Label(self.content_frame, text="Obtenir une clé gratuite sur Google AI Studio", 
                         font=("Segoe UI", 8, "underline"), fg=FG_SEC, bg=BG, cursor="hand2")
         link.pack(anchor="w", pady=(0, 20))
-        link.bind("<Button-1>", lambda e: os.startfile("https://aistudio.google.com/apikey"))
+        import webbrowser
+        link.bind("<Button-1>", lambda e: webbrowser.open("https://aistudio.google.com/apikey"))
 
         tk.Label(self.content_frame, text="Modèle Gemini :", font=("Segoe UI", 10), fg=ACCENT, bg=BG).pack(anchor="w")
         
@@ -351,19 +371,20 @@ class InstallerApp:
             self.progress['value'] = 20
             self.root.update()
 
-            # 2. Dossier source (fichiers embarqués dans le Setup.exe)
+            # 2. Dossier source (fichiers embarqués dans le Setup)
             source_dir = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
-            exe_name = "OmiAssistant.exe"
+            exe_name = "OmiAssistant.exe" if sys.platform == "win32" else "OmiAssistant"
             icon_name = "omi_icon.ico"
-
+ 
             # 3. Copier l'exécutable et l'icône
             if (source_dir / exe_name).exists():
                 shutil.copy2(source_dir / exe_name, self.install_path / exe_name)
             else:
                 # Fallback pour le dev si on lance le script tel quel
-                if Path("dist/OmiAssistant.exe").exists():
-                    shutil.copy2("dist/OmiAssistant.exe", self.install_path / exe_name)
-
+                fallback_path = Path("dist") / exe_name
+                if fallback_path.exists():
+                    shutil.copy2(fallback_path, self.install_path / exe_name)
+ 
             if (source_dir / icon_name).exists():
                 shutil.copy2(source_dir / icon_name, self.install_path / icon_name)
 
@@ -397,21 +418,32 @@ class InstallerApp:
                     env_file.write_text(new_content, encoding="utf-8")
 
             # 5. Raccourcis
-            desktop = Path(os.path.join(os.environ['USERPROFILE'], 'Desktop'))
-            start_menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"     
-            startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
-
+            if sys.platform == "win32":
+                desktop = Path(os.path.join(os.environ['USERPROFILE'], 'Desktop'))
+                start_menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"     
+                startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+                shortcut_ext = ".lnk"
+            else:
+                desktop = Path.home() / "Desktop"
+                start_menu = Path.home() / ".local" / "share" / "applications"
+                startup_dir = Path.home() / ".config" / "autostart"
+                shortcut_ext = ".desktop"
+ 
             target_exe = self.install_path / exe_name
-
-            create_shortcut(str(target_exe), desktop / "OMI.lnk", str(self.install_path))
-            create_shortcut(str(target_exe), start_menu / "OMI.lnk", str(self.install_path))
-            create_shortcut(str(target_exe), startup_dir / "OMI.lnk", str(self.install_path))
-
+ 
+            create_shortcut(str(target_exe), desktop / f"OMI{shortcut_ext}", str(self.install_path))
+            create_shortcut(str(target_exe), start_menu / f"OMI{shortcut_ext}", str(self.install_path))
+            create_shortcut(str(target_exe), startup_dir / f"OMI{shortcut_ext}", str(self.install_path))
+ 
             self.progress['value'] = 100
             self.root.update()
-
+ 
             messagebox.showinfo("Succès", "OMI a été mis à jour !\n\nL'assistant se lancera automatiquement au démarrage.\nTes données et ton profil ont été conservés.")
-            os.startfile(target_exe)
+            if sys.platform == "win32":
+                os.startfile(target_exe)
+            else:
+                import subprocess
+                subprocess.Popen([str(target_exe)])
             self.root.destroy()
 
         except Exception as e:

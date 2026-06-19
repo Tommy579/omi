@@ -25,7 +25,20 @@ def step(msg):
     print('─'*50)
 
 
-def install_dependencies():
+def get_or_create_venv():
+    venv_dir = APP_DIR / ".venv"
+    if not venv_dir.exists():
+        print("  → Création de l'environnement virtuel (.venv)...")
+        subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
+    
+    if sys.platform == "win32":
+        return venv_dir / "Scripts" / "python.exe", venv_dir / "Scripts" / "pythonw.exe"
+    else:
+        python_bin = venv_dir / "bin" / "python"
+        return python_bin, python_bin
+
+
+def install_dependencies(venv_python):
     step("📦 Installation des dépendances...")
     
     packages = [
@@ -35,23 +48,22 @@ def install_dependencies():
         "pystray",
         "sounddevice",
         "numpy",
-        "pygetwindow",
         "pyautogui",
-        "win10toast-persist",
         "requests",
-        # whisper est optionnel et plus lourd
     ]
+    if sys.platform == "win32":
+        packages.extend(["pygetwindow", "win10toast-persist"])
     
     for pkg in packages:
         print(f"  → Installation de {pkg}...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "-q"])
+        subprocess.check_call([str(venv_python), "-m", "pip", "install", pkg])
     
     print("\n  ✓ Dépendances installées")
     
     # Whisper séparément (plus lourd)
     install_whisper = input("\n  Installer Whisper pour la transcription micro ? (y/n) : ").strip().lower()
     if install_whisper == "y":
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "openai-whisper", "-q"])
+        subprocess.check_call([str(venv_python), "-m", "pip", "install", "openai-whisper"])
         print("  ✓ Whisper installé")
 
 
@@ -73,27 +85,39 @@ def setup_api_key():
     print("  ✓ Clé enregistrée dans .env (ignoré par Git)")
 
 
-def setup_autostart():
-    step("🚀 Configuration du démarrage automatique avec Windows")
-    
-    # Dossier Startup de Windows
-    startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
-    
-    # Crée un fichier .bat qui lance le script Python en arrière-plan
-    bat_content = f"""@echo off
-start "" /B pythonw "{MAIN_SCRIPT}"
+def setup_autostart(venv_python, venv_python_w):
+    if sys.platform == "win32":
+        step("🚀 Configuration du démarrage automatique avec Windows")
+        startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+        bat_content = f"""@echo off\nstart "" /B "{venv_python_w}" "{MAIN_SCRIPT}"\n"""
+        bat_path = startup_dir / f"{APP_NAME}.bat"
+        bat_path.write_text(bat_content, encoding="utf-8")
+        print(f"  ✓ Fichier de démarrage créé : {bat_path}")
+        print(f"\n  L'assistant se lancera automatiquement au prochain démarrage de Windows.")
+    else:
+        step("🚀 Configuration du démarrage automatique avec Linux")
+        autostart_dir = Path.home() / ".config" / "autostart"
+        autostart_dir.mkdir(parents=True, exist_ok=True)
+        desktop_content = f"""[Desktop Entry]
+Type=Application
+Exec="{venv_python}" "{MAIN_SCRIPT}"
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Name=OmiAssistant
+Comment=Assistant IA Personnel
 """
-    bat_path = startup_dir / f"{APP_NAME}.bat"
-    bat_path.write_text(bat_content, encoding="utf-8")
-    
-    print(f"  ✓ Fichier de démarrage créé :")
-    print(f"    {bat_path}")
-    print(f"\n  L'assistant se lancera automatiquement au prochain démarrage de Windows.")
+        desktop_path = autostart_dir / f"{APP_NAME}.desktop"
+        desktop_path.write_text(desktop_content, encoding="utf-8")
+        os.chmod(desktop_path, 0o755)
+        print(f"  ✓ Fichier de démarrage créé : {desktop_path}")
+        print(f"\n  L'assistant se lancera automatiquement au prochain démarrage de Linux.")
 
 
 def build_exe():
-    step("📦 Construction du fichier .exe (optionnel)")
-    build = input("  Construire un .exe standalone ? (y/n) : ").strip().lower()
+    exe_name = f"{APP_NAME}.exe" if sys.platform == "win32" else APP_NAME
+    step(f"📦 Construction du fichier {exe_name} (optionnel)")
+    build = input(f"  Construire un {exe_name} standalone ? (y/n) : ").strip().lower()
     
     if build != "y":
         print("  → Ignoré. Tu peux relancer install.py plus tard.")
@@ -103,38 +127,54 @@ def build_exe():
     subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller", "-q"])
     
     print("  Construction en cours (peut prendre quelques minutes)...")
+    sep = ";" if sys.platform == "win32" else ":"
     cmd = [
         "pyinstaller",
-        "--onefile",           # tout dans un seul .exe
-        "--windowed",          # pas de console
+        "--onefile",
+        "--windowed",
         "--name", APP_NAME,
-        "--add-data", f"{APP_DIR / 'config.py'};.",
-        "--add-data", f"{APP_DIR / '.env'};.",
+        "--add-data", f"{APP_DIR / 'config.py'}{sep}.",
+        "--add-data", f"{APP_DIR / '.env'}{sep}.",
         str(MAIN_SCRIPT),
     ]
     
     result = subprocess.run(cmd, cwd=APP_DIR)
     
     if result.returncode == 0:
-        exe_path = APP_DIR / "dist" / f"{APP_NAME}.exe"
+        exe_path = APP_DIR / "dist" / exe_name
         print(f"\n  ✓ Exécutable créé : {exe_path}")
         
-        # Met à jour le bat pour pointer sur le .exe
-        startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
-        bat_content = f'@echo off\nstart "" "{exe_path}"\n'
-        bat_path = startup_dir / f"{APP_NAME}.bat"
-        bat_path.write_text(bat_content, encoding="utf-8")
-        print(f"  ✓ Démarrage automatique mis à jour pour pointer sur le .exe")
+        if sys.platform == "win32":
+            startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+            bat_content = f'@echo off\nstart "" "{exe_path}"\n'
+            bat_path = startup_dir / f"{APP_NAME}.bat"
+            bat_path.write_text(bat_content, encoding="utf-8")
+            print(f"  ✓ Démarrage automatique mis à jour pour pointer sur le .exe")
+        else:
+            autostart_dir = Path.home() / ".config" / "autostart"
+            desktop_content = f"""[Desktop Entry]
+Type=Application
+Exec="{exe_path}"
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Name=OmiAssistant
+Comment=Assistant IA Personnel
+"""
+            desktop_path = autostart_dir / f"{APP_NAME}.desktop"
+            desktop_path.write_text(desktop_content, encoding="utf-8")
+            os.chmod(desktop_path, 0o755)
+            print(f"  ✓ Démarrage automatique mis à jour pour pointer sur l'exécutable Linux")
     else:
-        print("  ⚠ Erreur lors de la construction du .exe")
+        print("  ⚠ Erreur lors de la construction de l'exécutable")
 
 
-def launch_now():
+def launch_now(venv_python_w):
     step("▶ Lancement de l'assistant")
     launch = input("  Lancer l'assistant maintenant ? (y/n) : ").strip().lower()
     if launch == "y":
         print("  Démarrage... (l'icône va apparaître dans la barre des tâches)")
-        subprocess.Popen([sys.executable, str(MAIN_SCRIPT)], 
+        subprocess.Popen([str(venv_python_w), str(MAIN_SCRIPT)], 
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
         print("  ✓ Assistant lancé !")
 
@@ -145,11 +185,12 @@ def main():
     print("═"*50)
     
     try:
-        install_dependencies()
+        venv_python, venv_python_w = get_or_create_venv()
+        install_dependencies(venv_python)
         setup_api_key()
-        setup_autostart()
+        setup_autostart(venv_python, venv_python_w)
         build_exe()
-        launch_now()
+        launch_now(venv_python_w)
         
         print("\n" + "═"*50)
         print("  ✅ Installation terminée !")
