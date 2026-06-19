@@ -172,6 +172,8 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
         active_window : objet pywinauto déjà récupéré (optionnel, pour éviter un double appel).
         Retourne None si l'écran est trop peu textuel (< UI_TREE_MIN_WORDS mots).
         """
+        if os.name != 'nt':
+            return None
         try:
             from pywinauto import Desktop
             app = active_window or Desktop(backend="uia").active_window()
@@ -208,14 +210,33 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
         """
         try:
             import re
-            import pygetwindow as gw
+            import subprocess
             from core.tools import search_files, read_file
 
-            active = gw.getActiveWindow()
-            if not active or not active.title:
-                return None, None
+            title = None
+            if os.name == 'nt':
+                try:
+                    import pygetwindow as gw
+                    active = gw.getActiveWindow()
+                    if active and active.title:
+                        title = active.title
+                except Exception:
+                    pass
+            else:
+                try:
+                    out = subprocess.check_output(["xdotool", "getactivewindow", "getwindowname"], stderr=subprocess.DEVNULL)
+                    title = out.decode("utf-8", errors="ignore").strip()
+                except Exception:
+                    try:
+                        out = subprocess.check_output(["xprop", "-id", subprocess.check_output(["xprop", "-root", "_NET_ACTIVE_WINDOW"]).split()[-1], "WM_NAME"], stderr=subprocess.DEVNULL)
+                        parts = out.decode("utf-8", errors="ignore").split("=", 1)
+                        if len(parts) > 1:
+                            title = parts[1].strip().strip('"')
+                    except Exception:
+                        pass
 
-            title = active.title
+            if not title:
+                return None, None
 
             # Ignorer la fenêtre OMI pour éviter l'auto-analyse
             if title.strip().upper() in ("OMI", "OMIASSISTANT"):
@@ -338,11 +359,13 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
         profile_ctx = get_profile_summary()
 
         # Récupérer la fenêtre active une seule fois pour les deux méthodes
-        try:
-            from pywinauto import Desktop
-            _active_win = Desktop(backend="uia").active_window()
-        except Exception:
-            _active_win = None
+        _active_win = None
+        if os.name == 'nt':
+            try:
+                from pywinauto import Desktop
+                _active_win = Desktop(backend="uia").active_window()
+            except Exception:
+                pass
 
         # --- Priorité 1 : document lisible ouvert ---
         file_path, doc_content = self._get_active_document()
@@ -479,24 +502,27 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
         loopback_device_index = None
 
         # --- Détection du loopback WASAPI (son interne du PC) ---
-        try:
-            import pyaudiowpatch as pyaudio
-            p = pyaudio.PyAudio()
-            wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
-            default_speakers = p.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
-            for i in range(p.get_device_count()):
-                dev = p.get_device_info_by_index(i)
-                if (dev["name"] == default_speakers["name"]
-                        and dev["hostApi"] == wasapi_info["index"]
-                        and dev.get("isLoopbackDevice")):
-                    loopback_device_index = i
-                    print(f"[Audio] Loopback WASAPI trouvé : {dev['name']}")
-                    break
-            p.terminate()
-        except Exception as e:
-            print(f"[Audio] pyaudiowpatch non disponible : {e}")
-            print("[Audio] Tentative de fallback via sounddevice...")
-            keywords = ["mixage", "stereo mix", "loopback", "what u hear", "voicemeeter output", "cable output"]
+        if os.name == 'nt':
+            try:
+                import pyaudiowpatch as pyaudio
+                p = pyaudio.PyAudio()
+                wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
+                default_speakers = p.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
+                for i in range(p.get_device_count()):
+                    dev = p.get_device_info_by_index(i)
+                    if (dev["name"] == default_speakers["name"]
+                            and dev["hostApi"] == wasapi_info["index"]
+                            and dev.get("isLoopbackDevice")):
+                        loopback_device_index = i
+                        print(f"[Audio] Loopback WASAPI trouvé : {dev['name']}")
+                        break
+                p.terminate()
+            except Exception as e:
+                print(f"[Audio] pyaudiowpatch non disponible : {e}")
+                print("[Audio] Tentative de fallback via sounddevice...")
+
+        if loopback_device_index is None:
+            keywords = ["mixage", "stereo mix", "loopback", "what u hear", "voicemeeter output", "cable output", "monitor"]
             devices = sd.query_devices()
             print("[Audio] Périphériques d'entrée disponibles :")
             for i, dev in enumerate(devices):
@@ -548,42 +574,60 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
             """Capture et transcrit l'audio système (loopback) en continu."""
             if loopback_device_index is None:
                 print("[Loopback] Aucun device détecté — thread loopback inactif.")
-                print("[Loopback] Pour activer : installez pyaudiowpatch ou activez 'Mixage stéréo' dans les paramètres audio Windows.")
                 return
 
             print(f"[Loopback] Démarrage capture sur device index {loopback_device_index}")
 
             while self.is_running:
                 try:
-                    import pyaudiowpatch as pyaudio
-                    p = pyaudio.PyAudio()
-                    dev_info = p.get_device_info_by_index(loopback_device_index)
-                    channels = int(dev_info["maxInputChannels"])
-                    dev_sample_rate = int(dev_info["defaultSampleRate"])
-                    stream = p.open(
-                        format=pyaudio.paInt16,
-                        channels=channels,
-                        rate=dev_sample_rate,
-                        input=True,
-                        input_device_index=loopback_device_index,
-                        frames_per_buffer=1024
-                    )
-                    frames = []
-                    for _ in range(int(dev_sample_rate / 1024 * AUDIO_SEGMENT_DURATION)):
-                        frames.append(stream.read(1024, exception_on_overflow=False))
-                    stream.stop_stream()
-                    stream.close()
-                    p.terminate()
+                    if os.name == 'nt':
+                        try:
+                            import pyaudiowpatch as pyaudio
+                            p = pyaudio.PyAudio()
+                            dev_info = p.get_device_info_by_index(loopback_device_index)
+                            channels = int(dev_info["maxInputChannels"])
+                            dev_sample_rate = int(dev_info["defaultSampleRate"])
+                            stream = p.open(
+                                format=pyaudio.paInt16,
+                                channels=channels,
+                                rate=dev_sample_rate,
+                                input=True,
+                                input_device_index=loopback_device_index,
+                                frames_per_buffer=1024
+                            )
+                            frames = []
+                            for _ in range(int(dev_sample_rate / 1024 * AUDIO_SEGMENT_DURATION)):
+                                frames.append(stream.read(1024, exception_on_overflow=False))
+                            stream.stop_stream()
+                            stream.close()
+                            p.terminate()
 
-                    raw = b"".join(frames)
-                    arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-                    if channels > 1:
-                        arr = arr.reshape(-1, channels).mean(axis=1)
+                            raw = b"".join(frames)
+                            arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+                            if channels > 1:
+                                arr = arr.reshape(-1, channels).mean(axis=1)
+                        except Exception as e:
+                            print(f"[Loopback] Erreur WASAPI loopback, fallback sounddevice : {e}")
+                            loopback_audio = sd.rec(
+                                int(AUDIO_SEGMENT_DURATION * sample_rate),
+                                samplerate=sample_rate, channels=1, dtype="float32",
+                                device=loopback_device_index
+                            )
+                            sd.wait()
+                            arr = loopback_audio.flatten()
+                    else:
+                        loopback_audio = sd.rec(
+                            int(AUDIO_SEGMENT_DURATION * sample_rate),
+                            samplerate=sample_rate, channels=1, dtype="float32",
+                            device=loopback_device_index
+                        )
+                        sd.wait()
+                        arr = loopback_audio.flatten()
 
                     audio_level = np.abs(arr).mean()
-                    print(f"[Loopback] Niveau audio : {audio_level:.4f}")  # debug — à retirer une fois stable
+                    print(f"[Loopback] Niveau audio : {audio_level:.4f}")
 
-                    if audio_level > 0.001:  # seuil abaissé (était 0.005)
+                    if audio_level > 0.001:
                         result = model.transcribe(
                             arr,
                             language="fr",

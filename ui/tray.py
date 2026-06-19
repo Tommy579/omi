@@ -10,13 +10,18 @@ import tkinter as tk
 from tkinter import scrolledtext
 import pystray
 from PIL import Image, ImageDraw
-import winreg
+try:
+    import winreg
+except ImportError:
+    winreg = None
 
 # ─────────────────────────────────────────────────────────
 # Thème
 # ─────────────────────────────────────────────────────────
 
 def get_windows_theme():
+    if not winreg:
+        return "dark"
     try:
         reg = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
         key = winreg.OpenKey(reg, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
@@ -180,10 +185,18 @@ class OverlayWindow:
             self.window = tk.Toplevel(self.root)
             self.window.overrideredirect(True)
             self.window.attributes("-topmost", True)
-            self.window.attributes("-transparentcolor", CHROMA)
-            self.window.config(bg=CHROMA)
-            # Désactiver le focus pour que ce soit vraiment un filigrane
-            self.window.attributes("-disabled", True)
+            if winreg is not None:
+                self.window.attributes("-transparentcolor", CHROMA)
+                self.window.config(bg=CHROMA)
+                self.window.attributes("-disabled", True)
+            else:
+                theme = get_windows_theme()
+                bg_color = THEMES[theme]["bg"]
+                self.window.config(bg=bg_color)
+                try:
+                    self.window.attributes("-alpha", 0.8)
+                except Exception:
+                    pass
             self._draw()
 
     def _draw(self):
@@ -194,8 +207,11 @@ class OverlayWindow:
         # Limité à environ 3-4 cm (300px) et 3 lignes
         display_text = self.text
         
-        lbl = tk.Label(self.window, text=display_text, font=("Segoe UI", 11),
-                       fg="#888888", bg=CHROMA, justify="right", anchor="e",
+        theme = get_windows_theme()
+        bg_color = CHROMA if winreg is not None else THEMES[theme]["bg"]
+        font_name = "Segoe UI" if winreg is not None else "DejaVu Sans"
+        lbl = tk.Label(self.window, text=display_text, font=(font_name, 11),
+                       fg="#888888", bg=bg_color, justify="right", anchor="e",
                        wraplength=280) # wraplength limite la largeur du texte
         lbl.pack(padx=10, pady=10)
         

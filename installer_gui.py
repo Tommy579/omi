@@ -122,20 +122,36 @@ MODELS = [
 ]
 
 def create_shortcut(target, shortcut_path, work_dir):
-    """Crée un raccourci Windows via un script VBS temporaire"""
+    """Crée un raccourci (Windows Lnk ou Linux Desktop)"""
     try:
-        vbs = (
-            f'Set oWS = WScript.CreateObject("WScript.Shell")\n'
-            f'sLinkFile = "{shortcut_path}"\n'
-            f'Set oLink = oWS.CreateShortcut(sLinkFile)\n'
-            f'oLink.TargetPath = "{target}"\n'
-            f'oLink.WorkingDirectory = "{work_dir}"\n'
-            f'oLink.Save'
-        )
-        vbs_path = Path(os.environ["TEMP"]) / "shortcut.vbs"
-        vbs_path.write_text(vbs, encoding="cp1252")
-        os.system(f'cscript //nologo "{vbs_path}"')
-        os.remove(vbs_path)
+        if sys.platform == "win32":
+            vbs = (
+                f'Set oWS = WScript.CreateObject("WScript.Shell")\n'
+                f'sLinkFile = "{shortcut_path}"\n'
+                f'Set oLink = oWS.CreateShortcut(sLinkFile)\n'
+                f'oLink.TargetPath = "{target}"\n'
+                f'oLink.WorkingDirectory = "{work_dir}"\n'
+                f'oLink.Save'
+            )
+            vbs_path = Path(os.environ["TEMP"]) / "shortcut.vbs"
+            vbs_path.write_text(vbs, encoding="cp1252")
+            os.system(f'cscript //nologo "{vbs_path}"')
+            os.remove(vbs_path)
+        else:
+            desktop_entry = (
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "Name=OMI\n"
+                f"Exec=\"{target}\"\n"
+                f"Path={work_dir}\n"
+                "Icon=omi_icon\n"
+                "Terminal=false\n"
+                "Categories=Utility;Application;\n"
+            )
+            shortcut_path = Path(shortcut_path)
+            shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+            shortcut_path.write_text(desktop_entry, encoding="utf-8")
+            os.chmod(shortcut_path, 0o755)
     except Exception as e:
         print(f"Erreur raccourci : {e}")
 
@@ -152,7 +168,10 @@ class InstallerApp:
         self.selected_model = MODELS[0][1]
         self.selected_persona_id = "developer"
         self.custom_objective = tk.StringVar()
-        self.install_path = Path(os.environ["LOCALAPPDATA"]) / "Programs" / "OMI"
+        if sys.platform == "win32":
+            self.install_path = Path(os.environ.get("LOCALAPPDATA", "~/.local/share")) / "Programs" / "OMI"
+        else:
+            self.install_path = Path.home() / ".local" / "share" / "omi"
         
         # UI Setup
         self.header_frame = tk.Frame(root, bg=BG, height=60)

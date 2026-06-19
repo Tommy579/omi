@@ -9,7 +9,10 @@ import base64
 import io
 import psutil
 import pyperclip
-import pyodbc
+try:
+    import pyodbc
+except ImportError:
+    pyodbc = None
 from datetime import datetime
 from pathlib import Path
 from PIL import Image
@@ -19,8 +22,16 @@ try:
 except ImportError:
     win32evtlog = None
 
-from pywinauto import Desktop, Application
-import comtypes.client
+try:
+    from pywinauto import Desktop, Application
+except ImportError:
+    Desktop = None
+    Application = None
+
+try:
+    import comtypes.client
+except ImportError:
+    comtypes = None
 
 from config import SCREEN_CAPTURE_SIZE, ALLOW_AUTONOMOUS_UI_INTERACTION
 from core.database import DB_PATH, query_transcripts, search_transcripts
@@ -81,6 +92,8 @@ def update_user_profile(section: str, key: str, value: str = None, items: list[s
 def get_ui_tree(window_title: str = None):
     """Récupère la structure textuelle d'une fenêtre (boutons, textes, etc.). 
     C'est beaucoup plus rapide que l'analyse d'image. Si window_title est None, prend la fenêtre active."""
+    if not Desktop:
+        return {"error": "Cet outil est uniquement supporté sur Windows."}
     try:
         if window_title:
             app = Desktop(backend="uia").window(title_re=f".*{window_title}.*")
@@ -101,6 +114,8 @@ def get_ui_tree(window_title: str = None):
 def background_interact(window_title: str, element_name: str, action: str = "click", text: str = None):
     """Interagit avec une application en arrière-plan sans bouger la souris physique.
     Actions: 'click', 'type'. Utile pour Mobile Connecté, iTunes, etc."""
+    if not Desktop:
+        return {"error": "Cet outil est uniquement supporté sur Windows."}
     try:
         app = Desktop(backend="uia").window(title_re=f".*{window_title}.*")
         element = app.child_window(title=element_name)
@@ -116,6 +131,8 @@ def background_interact(window_title: str, element_name: str, action: str = "cli
 
 def control_itunes(command: str):
     """Contrôle iTunes en arrière-plan (Play, Pause, Next, Previous, Volume)."""
+    if not comtypes:
+        return {"error": "Cet outil est uniquement supporté sur Windows."}
     try:
         itunes = comtypes.client.CreateObject("iTunes.Application")
         if command.lower() == "play": itunes.Play()
@@ -183,18 +200,19 @@ def search_files(query: str, root_dir: str = None):
     """Recherche des fichiers par nom. Utilise l'index Windows Search (instantané) ou scandir (rapide)."""
     matches = []
     
-    try:
-        conn_str = "Driver={Search.CollatorDSO};Extended Properties='Application=Windows';"
-        with pyodbc.connect(conn_str, autocommit=True) as conn:
-            with conn.cursor() as cursor:
-                sql = f"SELECT TOP 50 System.ItemPathDisplay FROM SystemIndex WHERE System.FileName LIKE '%{query}%'"
-                cursor.execute(sql)
-                for row in cursor.fetchall():
-                    matches.append(row[0])
-        if matches:
-            return {"matches": matches, "method": "windows_index"}
-    except Exception:
-        pass
+    if pyodbc:
+        try:
+            conn_str = "Driver={Search.CollatorDSO};Extended Properties='Application=Windows';"
+            with pyodbc.connect(conn_str, autocommit=True) as conn:
+                with conn.cursor() as cursor:
+                    sql = f"SELECT TOP 50 System.ItemPathDisplay FROM SystemIndex WHERE System.FileName LIKE '%{query}%'"
+                    cursor.execute(sql)
+                    for row in cursor.fetchall():
+                        matches.append(row[0])
+            if matches:
+                return {"matches": matches, "method": "windows_index"}
+        except Exception:
+            pass
 
     try:
         if not root_dir:
@@ -236,12 +254,16 @@ def get_process_details(pid: int):
         return {"error": str(e)}
 
 def send_notification(title: str, message: str):
-    """Affiche une notification Windows (Toast)."""
+    """Affiche une notification système (Toast sur Windows ou libnotify sur Linux)."""
     try:
-        from win10toast_persist import ToastNotifier
-        toaster = ToastNotifier()
-        toaster.show_toast(title, message, duration=5, threaded=True)
-        return {"status": "Notification envoyée."}
+        if platform.system() == "Windows":
+            from win10toast_persist import ToastNotifier
+            toaster = ToastNotifier()
+            toaster.show_toast(title, message, duration=5, threaded=True)
+            return {"status": "Notification envoyée."}
+        else:
+            subprocess.run(["notify-send", title, message], check=True)
+            return {"status": "Notification envoyée."}
     except Exception as e:
         return {"error": str(e)}
 
@@ -487,6 +509,14 @@ def get_machine_info():
     try:
         env_vars = {k: v for k, v in os.environ.items() 
                     if not any(secret in k.upper() for secret in ["KEY", "SECRET", "TOKEN", "PASS", "AUTH"])}
+        try:
+            user = os.getlogin()
+        except Exception:
+            try:
+                import getpass
+                user = getpass.getuser()
+            except Exception:
+                user = os.environ.get('USERNAME') or os.environ.get('USER') or "Unknown"
         return {
             "os": platform.system(),
             "os_release": platform.release(),
@@ -494,7 +524,7 @@ def get_machine_info():
             "machine": platform.machine(),
             "processor": platform.processor(),
             "node": platform.node(),
-            "user": os.getlogin() if hasattr(os, 'getlogin') else os.environ.get('USERNAME'),
+            "user": user,
             "cwd": os.getcwd(),
             "env_vars": env_vars
         }

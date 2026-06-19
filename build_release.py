@@ -25,42 +25,44 @@ def main():
     if DIST_DIR.exists(): shutil.rmtree(DIST_DIR)
     if BUILD_DIR.exists(): shutil.rmtree(BUILD_DIR)
 
-    # 1. Compiler OmiAssistant.exe
+    exe_ext = ".exe" if os.name == "nt" else ""
+    sep = ";" if os.name == "nt" else ":"
+    icon_args = ["--icon", "omi_icon.ico"] if os.name == "nt" else []
+
+    # 1. Compiler OmiAssistant
     # On n'inclut PAS le .env ici car le Setup s'en chargera pour l'utilisateur
     cmd_assistant = [
         "pyinstaller",
         "--onefile",
         "--windowed",
         "--name", "OmiAssistant",
-        "--icon", "omi_icon.ico",
-        "main.py"
-    ]
-    run_command(cmd_assistant, "Compilation de OmiAssistant.exe")
+    ] + icon_args + ["main.py"]
+    run_command(cmd_assistant, f"Compilation de OmiAssistant{exe_ext}")
 
     # 2. Vérifier que l'assistant est bien créé
-    assistant_exe = DIST_DIR / "OmiAssistant.exe"
+    assistant_exe = DIST_DIR / f"OmiAssistant{exe_ext}"
     if not assistant_exe.exists():
-        print("!!! OmiAssistant.exe n'a pas été trouvé après la compilation.")
+        print(f"!!! OmiAssistant{exe_ext} n'a pas été trouvé après la compilation.")
         exit(1)
 
-    # 3. Compiler OMI_Setup.exe
-    # On inclut OmiAssistant.exe et l'icône dans le bundle du Setup
+    # 3. Compiler OMI_Setup
+    # On inclut OmiAssistant et l'icône dans le bundle du Setup
     cmd_setup = [
         "pyinstaller",
         "--onefile",
         "--windowed",
         "--name", "OMI_Setup",
-        "--icon", "omi_icon.ico",
-        "--add-data", f"{assistant_exe};.",
-        "--add-data", f"{APP_DIR / 'omi_icon.ico'};.",
+    ] + icon_args + [
+        "--add-data", f"{assistant_exe}{sep}.",
+        "--add-data", f"{APP_DIR / 'omi_icon.ico'}{sep}.",
         "installer_gui.py"
     ]
-    run_command(cmd_setup, "Compilation de OMI_Setup.exe (Installeur)")
+    run_command(cmd_setup, f"Compilation de OMI_Setup{exe_ext} (Installeur)")
 
     print("\n" + "="*50)
     print("   RELEASE TERMINÉE AVEC SUCCÈS")
     print("="*50)
-    print(f"Fichier à distribuer : {DIST_DIR / 'OMI_Setup.exe'}")
+    print(f"Fichier à distribuer : {DIST_DIR / f'OMI_Setup{exe_ext}'}")
     print("="*50)
 
 if __name__ == "__main__":
