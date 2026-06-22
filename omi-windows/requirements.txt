@@ -1,0 +1,18 @@
+google-genai
+mss
+Pillow
+sounddevice
+numpy
+openai-whisper
+pygetwindow; sys_platform == 'win32'
+pyautogui
+pystray
+opencv-python
+psutil
+pyperclip
+pywin32; sys_platform == 'win32'
+python-dotenv
+pyaudiowpatch; sys_platform == 'win32'
+pyodbc; sys_platform == 'win32'
+pywinauto; sys_platform == 'win32'
+
