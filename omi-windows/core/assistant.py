@@ -111,11 +111,7 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
         self.chat_session = self.client.chats.create(
             model=GEMINI_MODEL,
             config={"system_instruction": enhanced_prompt, "tools": TOOLS_LIST}
-        )
-        # Session séparée pour l'analyse vision d'arrière-plan pour éviter les blocages de verrous
-        self.vision_chat_session = self.client.chats.create(
-            model=GEMINI_MODEL,
-            config={"system_instruction": enhanced_prompt, "tools": TOOLS_LIST}
+            
         )
         self._enhanced_prompt = enhanced_prompt  # Gardé pour le trim de session
         self._last_screen_arr = None
@@ -132,25 +128,13 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
             except Exception as e:
                 print(f"[Caméra] Erreur init : {e}")
 
-        # Charger la mémoire persistante depuis SQLite
-        try:
-            from core.database import load_chat_history
-            self.memory = deque(load_chat_history(MAX_MEMORY_ITEMS), maxlen=MAX_MEMORY_ITEMS)
-        except Exception:
-            self.memory = deque(maxlen=MAX_MEMORY_ITEMS)
-            
+        self.memory = deque(maxlen=MAX_MEMORY_ITEMS)
         self.latest_suggestion = "Démarrage en cours..."
         self.is_running = False
         self.paused = False
         self.on_suggestion_callback = None
         self.on_transcript_callback = None
-        self.on_vocal_query_callback = None
-        
-        # Cacher le modèle Whisper pour éviter de le recharger à chaque relancement du micro
-        self.whisper_model = None
-        
-        self._chat_lock = threading.Lock()
-        self._vision_lock = threading.Lock()
+        self._lock = threading.Lock()
         self.last_camera_time = 0
 
     # ─────────────────────────────────────────────
@@ -169,47 +153,13 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
     def stop(self):
         self.is_running = False
         if self._camera is not None:
-            try:
-                self._camera.release()
-            except Exception:
-                pass
+            self._camera.release()
             self._camera = None
-        # Générer le résumé quotidien de l'activité
-        try:
-            from core.profile import generate_daily_summary
-            generate_daily_summary()
-        except Exception as e:
-            print(f"[Profil] Erreur génération résumé à l'arrêt : {e}")
 
     def toggle_pause(self):
         self.paused = not self.paused
         status = "en pause" if self.paused else "actif"
         print(f"[Assistant] État : {status}")
-        
-        if self.paused:
-            # Libérer la caméra pour les autres applications
-            if self._camera is not None:
-                try:
-                    self._camera.release()
-                except Exception:
-                    pass
-                self._camera = None
-                print("[Caméra] Périphérique libéré (en pause).")
-        else:
-            # Réouvrir la caméra
-            if ENABLE_CAMERA and self._camera is None:
-                try:
-                    import cv2
-                    self._camera = cv2.VideoCapture(0)
-                    if not self._camera.isOpened():
-                        self._camera = None
-                        print("[Caméra] Impossible de réouvrir le périphérique.")
-                    else:
-                        print("[Caméra] Périphérique réactivé.")
-                except Exception as e:
-                    print(f"[Caméra] Erreur réouverture : {e}")
-                    self._camera = None
-                    
         return self.paused
 
     # ─────────────────────────────────────────────
@@ -288,15 +238,12 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
             if not title:
                 return None, None
 
-            # Nettoyer le titre (supprimer l'étoile de modification et les espaces)
-            clean_title = title.strip().lstrip('*').strip()
-
             # Ignorer la fenêtre OMI pour éviter l'auto-analyse
-            if clean_title.upper() in ("OMI", "OMIASSISTANT"):
+            if title.strip().upper() in ("OMI", "OMIASSISTANT"):
                 return None, None
 
-            # Cache : si le titre propre de la fenêtre n'a pas changé, on réutilise le résultat précédent
-            if clean_title == self._doc_cache.get("title"):
+            # Cache : si le titre de la fenêtre n'a pas changé, on réutilise le résultat précédent
+            if title == self._doc_cache.get("title"):
                 cached_path = self._doc_cache.get("path")
                 cached_content = self._doc_cache.get("content")
                 if cached_path and cached_content:
@@ -304,7 +251,7 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                 return None, None
 
             # Nouveau titre : vider le cache et recalculer
-            self._doc_cache = {"title": clean_title, "path": None, "content": None}
+            self._doc_cache = {"title": title, "path": None, "content": None}
 
             pattern = r'([\w\-. ]+\.(?:' + '|'.join(e.lstrip('.') for e in READABLE_EXTENSIONS) + r'))'
             match = re.search(pattern, title, re.IGNORECASE)
@@ -406,17 +353,7 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
         Priorité 2 — Écran textuel → envoyer le texte UI Tree (texte, 0 token image)
         Priorité 3 — Écran visuel → envoyer l'image (tokens image normaux)
         """
-        # Enregistrer l'application active pour les statistiques de contexte
-        try:
-            from core.tools import get_active_app_name
-            from core.profile import record_active_app
-            app_name = get_active_app_name()
-            if app_name and app_name != "Unknown":
-                record_active_app(app_name)
-        except Exception as e:
-            print(f"[Profil] Erreur enregistrement app active : {e}")
-
-        self._trim_session_if_needed(session_type="vision")
+        self._trim_chat_history_if_needed()
 
         # Résumé du profil pour personnaliser les suggestions
         profile_ctx = get_profile_summary()
@@ -482,19 +419,16 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                     mode = "image"
 
             # --- Envoi à Gemini ---
-            from core.tools import send_message_with_retry
-            with self._vision_lock:
+            with self._lock:
                 if mode == "image":
-                    response = send_message_with_retry(self.vision_chat_session, prompt, images)
+                    response = self.chat_session.send_message([prompt] + images)
                 else:
-                    response = send_message_with_retry(self.vision_chat_session, prompt)
+                    response = self.chat_session.send_message(prompt)
 
             suggestion = response.text.strip()
             print(f"[Vision] Mode : {mode} | Réponse : {suggestion[:60]}...")
 
-            # Filtrage de la verbosité (seuil de confiance minimum)
-            clean_sugg = suggestion.strip().rstrip('.')
-            if clean_sugg.lower() in ["rien", "rien de particulier"] or len(clean_sugg) < 5:
+            if "Rien de particulier" in suggestion or len(suggestion) < 5:
                 return
 
         except Exception as e:
@@ -504,11 +438,12 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
         self._add_to_memory("vision", suggestion)
         self._update_suggestion(suggestion)
 
-    def _trim_chat_history_if_needed(self, session):
+    def _trim_chat_history_if_needed(self):
         try:
-            history = session.get_history()
+            with self._lock:
+                history = self.chat_session.get_history()
             if len(history) <= MAX_CHAT_TURNS * 2:
-                return None
+                return
 
             recent = history[-(MAX_CHAT_TURNS * 2):]
 
@@ -516,6 +451,7 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
             start = 0
             for i, turn in enumerate(recent):
                 if turn.role == "user":
+                    # Vérifier qu'aucune part n'est une function_response
                     parts = turn.parts if hasattr(turn, "parts") else []
                     is_func_response = any(
                         hasattr(p, "function_response") and p.function_response
@@ -525,35 +461,28 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                         start = i
                         break
 
-            if start == 0:
-                # Fallback sécurisé : retenir seulement les 6 derniers messages pour éviter les boucles
-                recent = recent[-6:]
-            else:
-                recent = recent[start:]
+            recent = recent[start:]
 
             profile_summary = get_profile_summary()
             prompt_with_profile = self._enhanced_prompt
             if profile_summary:
                 prompt_with_profile = self._enhanced_prompt + f"\n\n{profile_summary}"
 
-            return self.client.chats.create(
-                model=GEMINI_MODEL,
-                config={"system_instruction": prompt_with_profile, "tools": TOOLS_LIST},
-                history=recent
-            )
+            with self._lock:
+                self.chat_session = self.client.chats.create(
+                    model=GEMINI_MODEL,
+                    config={"system_instruction": prompt_with_profile, "tools": TOOLS_LIST},
+                    history=recent
+                )
+            print(f"[Chat] Historique taillé à {len(recent)} tours. Profil injecté.")
         except Exception as e:
             print(f"[Chat] Erreur trim historique : {e}")
-            return None
-
-    def _trim_session_if_needed(self, session_type="chat"):
-        if session_type == "chat":
-            trimmed = self._trim_chat_history_if_needed(self.chat_session)
-            if trimmed:
-                self.chat_session = trimmed
-        else:
-            trimmed = self._trim_chat_history_if_needed(self.vision_chat_session)
-            if trimmed:
-                self.vision_chat_session = trimmed
+            # En dernier recours, repartir d'une session vide
+            with self._lock:
+                self.chat_session = self.client.chats.create(
+                    model=GEMINI_MODEL,
+                    config={"system_instruction": self._enhanced_prompt, "tools": TOOLS_LIST}
+                )
 
     # ─────────────────────────────────────────────
     # Microphone
@@ -562,18 +491,12 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
     def _mic_loop(self):
         import sounddevice as sd
         import numpy as np
-        
-        if self.whisper_model is None:
-            try:
-                import whisper
-                print("[Micro] Chargement du modèle Whisper...")
-                self.whisper_model = whisper.load_model("base")
-                print("[Micro] Modèle Whisper chargé.")
-            except ImportError:
-                print("[Micro] whisper non installé, micro désactivé")
-                return
-        
-        model = self.whisper_model
+        try:
+            import whisper
+            model = whisper.load_model("base")
+        except ImportError:
+            print("[Micro] whisper non installé, micro désactivé")
+            return
 
         sample_rate = 16000
         loopback_device_index = None
@@ -620,9 +543,6 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
         def capture_mic():
             """Capture et transcrit le micro physique en continu."""
             while self.is_running:
-                if self.paused:
-                    time.sleep(1)
-                    continue
                 try:
                     mic_audio = sd.rec(
                         int(AUDIO_SEGMENT_DURATION * sample_rate),
@@ -646,14 +566,6 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                             add_transcript("User", text)
                             if self.on_transcript_callback:
                                 self.on_transcript_callback(text)
-                            
-                            # Détection du Wake Word vocal "omi"
-                            if "omi" in text.lower():
-                                lower_text = text.lower()
-                                idx = lower_text.find("omi")
-                                query = text[idx + 3:].strip().lstrip(",").strip()
-                                if query and self.on_vocal_query_callback:
-                                    self.on_vocal_query_callback(query)
                 except Exception as e:
                     print(f"[Micro] Erreur capture voix : {e}")
                     time.sleep(5)
@@ -667,9 +579,6 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
             print(f"[Loopback] Démarrage capture sur device index {loopback_device_index}")
 
             while self.is_running:
-                if self.paused:
-                    time.sleep(1)
-                    continue
                 try:
                     if os.name == 'nt':
                         try:
@@ -750,15 +659,9 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
     def _analyze_audio(self, transcript):
         prompt = f'J\'ai entendu ceci : "{transcript}". Réagis si c\'est important ou utile.'
         try:
-            from core.tools import send_message_with_retry
-            with self._vision_lock:
-                response = send_message_with_retry(self.vision_chat_session, prompt)
+            with self._lock:
+                response = self.chat_session.send_message(prompt)
             suggestion = response.text.strip()
-            
-            clean_sugg = suggestion.strip().rstrip('.')
-            if clean_sugg.lower() in ["rien", "rien de particulier"] or len(clean_sugg) < 5:
-                return
-                
             add_transcript("System", f"Suggestion: {suggestion}")
             self._add_to_memory("audio", suggestion)
             self._update_suggestion(f"🎤 {suggestion}")
@@ -771,8 +674,6 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
 
     def chat(self, user_message: str, is_system: bool = False, status_callback=None) -> str:
         try:
-            self._trim_session_if_needed(session_type="chat")
-            
             if not is_system:
                 recent = query_transcripts(limit=5)
                 context = "\n".join([f"[{r[0]}] {r[1]}: {r[2]}" for r in reversed(recent)])
@@ -781,8 +682,6 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                 full_prompt = f"Système : {user_message}"
 
             if status_callback: status_callback("Analyse du contexte...")
-
-            from core.tools import send_message_with_retry
 
             # Essayer d'abord le mode texte (moins de tokens, plus rapide)
             file_path, doc_content = self._get_active_document()
@@ -793,32 +692,24 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                 context_block = f"\nContexte — fichier ouvert `{file_path}` :\n```\n{doc_content}\n```\n"
                 full_prompt = context_block + full_prompt
                 if status_callback: status_callback("Analyse Gemini en cours (mode document)...")
-                with self._chat_lock:
-                    response = send_message_with_retry(self.chat_session, full_prompt)
+                with self._lock:
+                    response = self.chat_session.send_message(full_prompt)
             else:
                 screen_text = self._get_screen_text()
                 if screen_text:
                     full_prompt = f"Contenu de l'écran :\n{screen_text}\n\n{full_prompt}"
                     if status_callback: status_callback("Analyse Gemini en cours (mode texte)...")
-                    with self._chat_lock:
-                        response = send_message_with_retry(self.chat_session, full_prompt)
+                    with self._lock:
+                        response = self.chat_session.send_message(full_prompt)
                 else:
                     # Fallback image
                     if status_callback: status_callback("Capture de l'écran...")
                     screen_img = self._capture_screen()
                     if status_callback: status_callback("Analyse Gemini en cours (mode image)...")
-                    with self._chat_lock:
-                        response = send_message_with_retry(self.chat_session, full_prompt, [screen_img])
+                    with self._lock:
+                        response = self.chat_session.send_message([full_prompt, screen_img])
 
             text_response = response.text.strip()
-
-            # Enregistrer la question de l'utilisateur et la réponse d'OMI dans SQLite
-            try:
-                from core.database import add_chat_history
-                add_chat_history("user", user_message)
-                add_chat_history("assistant", text_response)
-            except Exception as e:
-                print(f"[Base] Erreur persistance chat : {e}")
 
             if "[UPDATE_SCREEN]" in text_response:
                 clean_text = text_response.replace("[UPDATE_SCREEN]", "").strip()
@@ -837,22 +728,15 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
     # ─────────────────────────────────────────────
 
     def _add_to_memory(self, source_type: str, content: str):
-        item = {
-            "type": source_type,
-            "content": content,
-            "time": datetime.now().strftime("%H:%M"),
-        }
-        with self._vision_lock:
-            self.memory.append(item)
-        
-        try:
-            from core.database import add_chat_history
-            add_chat_history(source_type, content)
-        except Exception as e:
-            print(f"[Base] Erreur persistance historique : {e}")
+        with self._lock:
+            self.memory.append({
+                "type": source_type,
+                "content": content,
+                "time": datetime.now().strftime("%H:%M"),
+            })
 
     def _update_suggestion(self, text: str):
-        with self._vision_lock:
+        with self._lock:
             self.latest_suggestion = text
         if self.on_suggestion_callback:
             self.on_suggestion_callback(text)
