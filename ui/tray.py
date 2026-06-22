@@ -32,30 +32,54 @@ def get_windows_theme():
 
 THEMES = {
     "dark": {
-        "bg":        "#111111",
-        "surface":   "#1C1C1C",
-        "input_bg":  "#1C1C1C",
-        "border":    "#2A2A2A",
-        "fg":        "#F0F0F0",
-        "fg_sec":    "#888888",
-        "fg_omi":    "#FFFFFF",
-        "accent":    "#FFFFFF",
-        "btn_bg":    "#232323",
-        "btn_hover": "#2E2E2E",
-        "border_line": "#3a3a3a",
+        "bg":           "#0F0F0F",
+        "surface":      "#1A1A1A",
+        "surface2":     "#222222",
+        "input_bg":     "#181818",
+        "border":       "#2A2A2A",
+        "border_focus": "#444444",
+        "fg":           "#EFEFEF",
+        "fg_sec":       "#666666",
+        "fg_ter":       "#444444",
+        "fg_omi":       "#FFFFFF",
+        "accent":       "#FFFFFF",
+        "accent_dim":   "#CCCCCC",
+        "bubble_omi":   "#1E1E1E",
+        "bubble_user":  "#2A2A2A",
+        "dot_active":   "#FFFFFF",
+        "dot_inactive": "#333333",
+        "badge_bg":     "#252525",
+        "badge_fg":     "#666666",
+        "btn_bg":       "#1A1A1A",
+        "btn_hover":    "#252525",
+        "border_line":  "#2A2A2A",
+        "scrollbar":    "#2A2A2A",
+        "scrollbar_hover": "#3A3A3A",
     },
     "light": {
-        "bg":        "#F5F5F5",
-        "surface":   "#FFFFFF",
-        "input_bg":  "#ECECEC",
-        "border":    "#E0E0E0",
-        "fg":        "#111111",
-        "fg_sec":    "#888888",
-        "fg_omi":    "#111111",
-        "accent":    "#000000",
-        "btn_bg":    "#E8E8E8",
-        "btn_hover": "#DCDCDC",
-        "border_line": "#CCCCCC",
+        "bg":           "#F2F2F2",
+        "surface":      "#FFFFFF",
+        "surface2":     "#F8F8F8",
+        "input_bg":     "#EBEBEB",
+        "border":       "#E0E0E0",
+        "border_focus": "#BBBBBB",
+        "fg":           "#111111",
+        "fg_sec":       "#999999",
+        "fg_ter":       "#CCCCCC",
+        "fg_omi":       "#111111",
+        "accent":       "#000000",
+        "accent_dim":   "#444444",
+        "bubble_omi":   "#F0F0F0",
+        "bubble_user":  "#E8E8E8",
+        "dot_active":   "#000000",
+        "dot_inactive": "#DDDDDD",
+        "badge_bg":     "#EEEEEE",
+        "badge_fg":     "#AAAAAA",
+        "btn_bg":       "#FFFFFF",
+        "btn_hover":    "#F0F0F0",
+        "border_line":  "#E0E0E0",
+        "scrollbar":    "#DDDDDD",
+        "scrollbar_hover": "#CCCCCC",
     },
 }
 
@@ -79,6 +103,57 @@ def rounded_rect(canvas, x1, y1, x2, y2, r, **kwargs):
         x1,   y1+r,x1,   y1,
     ]
     return canvas.create_polygon(pts, smooth=True, **kwargs)
+
+
+def draw_omi_logo(canvas, cx, cy, size=10, color="#FFFFFF"):
+    """Dessine le logo OMI (3 cercles concentriques) centré en (cx, cy)."""
+    r1, r2, r3 = size, size * 0.55, size * 0.25
+    canvas.create_oval(cx-r1, cy-r1, cx+r1, cy+r1, fill=color, outline="")
+    canvas.create_oval(cx-r2, cy-r2, cx+r2, cy+r2, fill=canvas["bg"], outline="")
+    canvas.create_oval(cx-r3, cy-r3, cx+r3, cy+r3, fill=color, outline="")
+
+
+class HoverButton(tk.Label):
+    """Label cliquable avec effet hover via changement de couleur."""
+    def __init__(self, parent, normal_fg, hover_fg, bg, **kwargs):
+        super().__init__(parent, fg=normal_fg, bg=bg, **kwargs)
+        self._normal_fg = normal_fg
+        self._hover_fg = hover_fg
+        self.bind("<Enter>", lambda e: self.config(fg=self._hover_fg))
+        self.bind("<Leave>", lambda e: self.config(fg=self._normal_fg))
+
+    def update_colors(self, normal_fg, hover_fg, bg):
+        self._normal_fg = normal_fg
+        self._hover_fg = hover_fg
+        self.config(fg=normal_fg, bg=bg)
+
+
+class LoadingDots:
+    """Anime un texte de chargement avec des points (...) dans un widget Text."""
+    def __init__(self, root):
+        self._root = root
+        self._running = False
+        self._step = 0
+        self._frames = ["   ", ".  ", ".. ", "..."]
+        self._callback = None
+
+    def start(self, callback):
+        """callback(text) est appelé à chaque frame avec le texte animé."""
+        self._callback = callback
+        self._running = True
+        self._step = 0
+        self._tick()
+
+    def stop(self):
+        self._running = False
+
+    def _tick(self):
+        if not self._running:
+            return
+        if self._callback:
+            self._callback(f"Réflexion{self._frames[self._step % len(self._frames)]}")
+        self._step += 1
+        self._root.after(400, self._tick)
 
 
 # ─────────────────────────────────────────────────────────
@@ -220,8 +295,9 @@ class PopupWindow:
         self.overlay.hide()
 
     def _build_ui(self):
-        W, H = 360, 500
-        R = 16          # rayon des coins de la fenêtre
+        from config import OMI_PERSONA
+        W, H = 370, 520
+        R = 18
         win = self.window
         t = self.t
 
@@ -230,148 +306,269 @@ class PopupWindow:
         win.resizable(False, False)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
+        win.configure(bg=CHROMA)
+        win.attributes("-transparentcolor", CHROMA)
 
-        # ── Radius global via transparentcolor ──────────────
-        # Le fond de la fenêtre est CHROMA (couleur invisible)
-        # On dessine un rectangle arrondi par-dessus : les coins restent transparents
-        if winreg is not None:
-            win.configure(bg=CHROMA)
-            win.attributes("-transparentcolor", CHROMA)
-        else:
-            win.configure(bg=t["bg"])
-
-        # Position bas-droite
-        sw = win.winfo_screenwidth()
-        sh = win.winfo_screenheight()
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
         win.geometry(f"{W}x{H}+{sw - W - 16}+{sh - H - 52}")
 
-        # Canvas principal qui couvre toute la fenêtre
-        bg_color = CHROMA if winreg is not None else t["bg"]
-        root_canvas = tk.Canvas(win, width=W, height=H,
-                                bg=bg_color, highlightthickness=0, bd=0)
+        # Canvas principal
+        root_canvas = tk.Canvas(win, width=W, height=H, bg=CHROMA,
+                                highlightthickness=0, bd=0)
         root_canvas.place(x=0, y=0)
+        rounded_rect(root_canvas, 0, 0, W, H, R,
+                     fill=t["bg"], outline=t["border_line"], width=1)
 
-        # Rectangle arrondi = fond réel de la fenêtre
-        rounded_rect(root_canvas, 0, 0, W, H, R, fill=t["bg"], outline=t["border_line"], width=1.5)
-
-        # Drag sur le canvas racine
         root_canvas.bind("<ButtonPress-1>", self._drag_start)
-        root_canvas.bind("<B1-Motion>",     self._drag_move)
+        root_canvas.bind("<B1-Motion>", self._drag_move)
 
-        # ── Titlebar — widgets posés directement sur le canvas ──
-        # (pas de Frame intermédiaire pour ne pas boucher les coins arrondis)
+        # ── Header ────────────────────────────────────────────
+        HEADER_H = 44
 
-        lbl_title = tk.Label(root_canvas, text="OMI", font=("Segoe UI", 11, "bold"),
-                             fg=t["fg"], bg=t["bg"], cursor="hand2")
-        root_canvas.create_window(16, 22, anchor="w", window=lbl_title)
-        lbl_title.bind("<Button-1>", self.minimize)
+        # Logo OMI dessiné
+        draw_omi_logo(root_canvas, 22, HEADER_H // 2, size=9,
+                      color=t["accent"])
 
-        close_btn = tk.Label(root_canvas, text="×", font=("Segoe UI", 15),
-                             fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
-        root_canvas.create_window(W - 14, 22, anchor="e", window=close_btn)
-        close_btn.bind("<Button-1>", self.close_completely)
+        # Titre
+        root_canvas.create_text(38, HEADER_H // 2, text="OMI",
+                                font=("Segoe UI", 11, "bold"),
+                                fill=t["fg"], anchor="w")
 
-        min_btn = tk.Label(root_canvas, text="—", font=("Segoe UI", 11),
-                             fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
-        root_canvas.create_window(W - 38, 22, anchor="e", window=min_btn)
-        min_btn.bind("<Button-1>", self.minimize)
+        # Badge persona (petit, discret)
+        persona_labels = {
+            "developer": "DEV", "student": "ETU", "creative": "CRE",
+            "manager": "MGR", "streamer": "STR", "custom": "PRO",
+        }
+        persona_text = persona_labels.get(OMI_PERSONA, "OMI")
+        badge_canvas = tk.Canvas(root_canvas, width=34, height=16,
+                                 bg=t["bg"], highlightthickness=0)
+        root_canvas.create_window(78, HEADER_H // 2, anchor="w",
+                                  window=badge_canvas)
+        rounded_rect(badge_canvas, 0, 0, 34, 16, 4,
+                     fill=t["badge_bg"], outline="")
+        badge_canvas.create_text(17, 8, text=persona_text,
+                                 font=("Segoe UI", 7, "bold"),
+                                 fill=t["badge_fg"])
 
-        self.trans_btn = tk.Label(root_canvas, text="🎙️", font=("Segoe UI", 10),
-                                    fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
-        root_canvas.create_window(W - 64, 22, anchor="e", window=self.trans_btn)
-        self.trans_btn.bind("<Button-1>", self._toggle_transcripts)
+        # Séparateur horizontal sous le header
+        root_canvas.create_line(0, HEADER_H, W, HEADER_H,
+                                fill=t["border_line"], width=1)
 
-        self.pause_label = tk.Label(root_canvas, text="⏸", font=("Segoe UI", 10),
-                                    fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
-        root_canvas.create_window(W - 90, 22, anchor="e", window=self.pause_label)
-        self.pause_label.bind("<Button-1>", self._toggle_pause)
+        # Boutons de contrôle (droite)
+        PAD_RIGHT = 14
+        btn_y = HEADER_H // 2
+        btn_specs = [
+            ("×",  "Segoe UI", 16, self.close_completely, W - PAD_RIGHT),
+            ("—",  "Segoe UI", 11, self.minimize,         W - PAD_RIGHT - 28),
+            ("⏸",  "Segoe UI", 10, self._toggle_pause,    W - PAD_RIGHT - 56),
+            ("🎙️", "Segoe UI", 10, self._toggle_transcripts, W - PAD_RIGHT - 82),
+            ("↺",  "Segoe UI", 13, self._force_analyze,   W - PAD_RIGHT - 108),
+        ]
+        self._header_btns = []
+        for txt, font_name, font_size, cmd, x in btn_specs:
+            btn = HoverButton(root_canvas,
+                              normal_fg=t["fg_sec"],
+                              hover_fg=t["accent"],
+                              bg=t["bg"],
+                              text=txt,
+                              font=(font_name, font_size),
+                              cursor="hand2")
+            root_canvas.create_window(x, btn_y, anchor="e", window=btn)
+            btn.bind("<Button-1>", lambda e, c=cmd: c())
+            self._header_btns.append(btn)
 
-        analyze_label = tk.Label(root_canvas, text="↺", font=("Segoe UI", 12),
-                                 fg=t["fg_sec"], bg=t["bg"], cursor="hand2")
-        root_canvas.create_window(W - 116, 22, anchor="e", window=analyze_label)
-        analyze_label.bind("<Button-1>", self._force_analyze)
+        self.pause_label = self._header_btns[2]  # référence pour toggle_pause
+
+        # Mode badge (en bas à droite de la titlebar)
+        self._mode_canvas = tk.Canvas(root_canvas, width=60, height=14,
+                                      bg=t["bg"], highlightthickness=0)
+        root_canvas.create_window(W // 2, HEADER_H // 2, anchor="center",
+                                  window=self._mode_canvas)
+        self._mode_rect = rounded_rect(self._mode_canvas, 0, 0, 60, 14, 4,
+                                       fill=t["badge_bg"], outline="")
+        self._mode_label = self._mode_canvas.create_text(
+            30, 7, text="", font=("Segoe UI", 7), fill=t["badge_fg"])
 
         # ── Zone messages ─────────────────────────────────────
-        PAD = 14
-        MSG_Y = 52
-        MSG_H = H - MSG_Y - 60   # laisse de la place pour l'input en bas
+        PAD = 12
+        MSG_Y = HEADER_H + 8
+        INPUT_H = 42
+        BOTTOM_PAD = 10
+        MSG_H = H - MSG_Y - INPUT_H - BOTTOM_PAD - 8
 
-        outer_msg = tk.Canvas(root_canvas, bg=t["bg"], highlightthickness=0, bd=0,
-                              width=W - PAD*2, height=MSG_H)
-        root_canvas.create_window(PAD, MSG_Y, anchor="nw", window=outer_msg)
-        rounded_rect(outer_msg, 0, 0, W - PAD*2, MSG_H, 12, fill=t["surface"], outline="")
+        # Conteneur messages
+        msg_frame = tk.Frame(root_canvas, bg=t["bg"])
+        root_canvas.create_window(PAD, MSG_Y, anchor="nw",
+                                  window=msg_frame,
+                                  width=W - PAD * 2,
+                                  height=MSG_H)
 
-        msg_inner = tk.Frame(outer_msg, bg=t["surface"])
-        outer_msg.create_window(8, 8, anchor="nw", window=msg_inner,
-                                width=W - PAD*2 - 16, height=MSG_H - 16)
-
-        self.msg_text = scrolledtext.ScrolledText(
-            msg_inner,
+        self.msg_text = tk.Text(
+            msg_frame,
             wrap="word",
             font=("Segoe UI", 10),
-            bg=t["surface"],
+            bg=t["bg"],
             fg=t["fg"],
             bd=0,
             highlightthickness=0,
-            padx=4,
-            pady=4,
+            padx=8,
+            pady=6,
             state="disabled",
             cursor="arrow",
+            spacing1=2,
+            spacing3=4,
+            yscrollcommand=self._on_scroll,
         )
         self.msg_text.pack(fill="both", expand=True)
+        self.msg_text.bind("<MouseWheel>", self._on_mousewheel)
 
-        # Zone de transcription (cachée par défaut)
-        self.trans_text = scrolledtext.ScrolledText(
-            msg_inner,
+        # Scrollbar fine personnalisée (Canvas)
+        self._scroll_canvas = tk.Canvas(root_canvas, width=3, bg=t["bg"],
+                                        highlightthickness=0)
+        root_canvas.create_window(W - 4, MSG_Y, anchor="nw",
+                                  window=self._scroll_canvas,
+                                  width=3, height=MSG_H)
+        self._scroll_thumb = None
+        self._scroll_canvas.bind("<Enter>",
+            lambda e: self._scroll_canvas.config(width=5))
+        self._scroll_canvas.bind("<Leave>",
+            lambda e: self._scroll_canvas.config(width=3))
+
+        # Zone transcriptions (cachée)
+        self.trans_text = tk.Text(
+            msg_frame,
             wrap="word",
             font=("Consolas", 9),
-            bg=t["input_bg"],
+            bg=t["bg"],
             fg=t["fg_sec"],
             bd=0,
             highlightthickness=0,
-            padx=4,
-            pady=4,
+            padx=8,
+            pady=6,
             state="disabled",
             cursor="arrow",
         )
-        # On ne la pack pas encore
 
-        self.msg_text.tag_config("sender_omi", foreground=t["fg_sec"],
-                                  font=("Segoe UI", 8, "bold"))
-        self.msg_text.tag_config("text_omi",   foreground=t["fg_omi"],
-                                  font=("Segoe UI", 10))
-        self.msg_text.tag_config("sender_you", foreground=t["fg_sec"],
-                                  font=("Segoe UI", 8, "bold"))
-        self.msg_text.tag_config("text_you",   foreground=t["fg"],
-                                  font=("Segoe UI", 10, "italic"))
+        # Tags messages — style moderne
+        self.msg_text.tag_config("ts",
+            foreground=t["fg_ter"],
+            font=("Segoe UI", 7),
+            spacing1=8)
+        self.msg_text.tag_config("sender_omi",
+            foreground=t["fg_sec"],
+            font=("Segoe UI", 8, "bold"),
+            spacing1=10, spacing3=1)
+        self.msg_text.tag_config("text_omi",
+            foreground=t["fg_omi"],
+            font=("Segoe UI", 10),
+            lmargin1=0, lmargin2=0,
+            spacing3=2)
+        self.msg_text.tag_config("sender_you",
+            foreground=t["fg_sec"],
+            font=("Segoe UI", 8, "bold"),
+            spacing1=10, spacing3=1)
+        self.msg_text.tag_config("text_you",
+            foreground=t["accent_dim"],
+            font=("Segoe UI", 10, "italic"),
+            lmargin1=0, lmargin2=0,
+            spacing3=2)
+        self.msg_text.tag_config("text_system",
+            foreground=t["fg_ter"],
+            font=("Segoe UI", 8, "italic"),
+            spacing1=4, spacing3=4)
 
         self._load_history()
 
         # ── Input ─────────────────────────────────────────────
-        INPUT_Y = H - 50
-        INPUT_H = 38
+        INPUT_Y = H - INPUT_H - BOTTOM_PAD
+        INPUT_W = W - PAD * 2
 
-        outer_input = tk.Canvas(root_canvas, bg=t["bg"], highlightthickness=0, bd=0,
-                                width=W - PAD*2, height=INPUT_H)
-        root_canvas.create_window(PAD, INPUT_Y, anchor="nw", window=outer_input)
-        rounded_rect(outer_input, 0, 0, W - PAD*2, INPUT_H, 10,
-                     fill=t["input_bg"], outline="")
+        input_canvas = tk.Canvas(root_canvas, width=INPUT_W, height=INPUT_H,
+                                 bg=t["bg"], highlightthickness=0)
+        root_canvas.create_window(PAD, INPUT_Y, anchor="nw", window=input_canvas)
+        self._input_rect = rounded_rect(input_canvas, 0, 2, INPUT_W, INPUT_H - 2, 12,
+                                        fill=t["input_bg"], outline=t["border"], width=1)
 
+        # Placeholder + champ texte
         self.input_var = tk.StringVar()
-        entry = tk.Entry(outer_input, textvariable=self.input_var,
+        self._placeholder_active = True
+        entry = tk.Entry(input_canvas,
+                         textvariable=self.input_var,
                          font=("Segoe UI", 10),
-                         bg=t["input_bg"], fg=t["fg"],
+                         bg=t["input_bg"], fg=t["fg_sec"],
                          insertbackground=t["fg"],
                          bd=0, highlightthickness=0)
-        outer_input.create_window(10, INPUT_H // 2, anchor="w",
-                                  window=entry, width=W - PAD*2 - 44, height=24)
-        entry.bind("<Return>", self._send)
+        input_canvas.create_window(12, INPUT_H // 2, anchor="w",
+                                   window=entry,
+                                   width=INPUT_W - 50, height=22)
 
-        send_btn = tk.Label(outer_input, text="↑", font=("Segoe UI", 13, "bold"),
-                            fg=t["accent"], bg=t["input_bg"], cursor="hand2")
-        outer_input.create_window(W - PAD*2 - 16, INPUT_H // 2,
-                                  anchor="center", window=send_btn)
+        # Gestion placeholder
+        def _focus_in(e):
+            if self._placeholder_active:
+                self.input_var.set("")
+                entry.config(fg=t["fg"])
+                self._placeholder_active = False
+            input_canvas.itemconfig(self._input_rect, outline=t["border_focus"])
+
+        def _focus_out(e):
+            if not self.input_var.get():
+                self.input_var.set("Écris un message...")
+                entry.config(fg=t["fg_sec"])
+                self._placeholder_active = True
+            input_canvas.itemconfig(self._input_rect, outline=t["border"])
+
+        entry.bind("<FocusIn>", _focus_in)
+        entry.bind("<FocusOut>", _focus_out)
+        entry.bind("<Return>", self._send)
+        self.input_var.set("Écris un message...")
+
+        # Bouton envoi
+        send_btn = HoverButton(input_canvas,
+                               normal_fg=t["fg_sec"],
+                               hover_fg=t["accent"],
+                               bg=t["input_bg"],
+                               text="↑",
+                               font=("Segoe UI", 14, "bold"),
+                               cursor="hand2")
+        input_canvas.create_window(INPUT_W - 18, INPUT_H // 2,
+                                   anchor="center", window=send_btn)
         send_btn.bind("<Button-1>", self._send)
+
+        # Référencer pour le thème
+        self._input_canvas = input_canvas
+        self._entry = entry
+
+        # Loader animation
+        self._loader = LoadingDots(self.root)
+
+    def _on_scroll(self, first, last):
+        """Met à jour la scrollbar personnalisée."""
+        if not hasattr(self, '_scroll_canvas'):
+            return
+        self._scroll_canvas.delete("all")
+        first, last = float(first), float(last)
+        if last - first >= 1.0:
+            return  # Tout est visible, pas de scrollbar
+        h = self._scroll_canvas.winfo_height() or 200
+        y0 = int(first * h)
+        y1 = int(last * h)
+        t = self.t
+        self._scroll_thumb = self._scroll_canvas.create_rectangle(
+            0, y0, 3, max(y1, y0 + 20),
+            fill=t["scrollbar"], outline="", width=0
+        )
+
+    def _on_mousewheel(self, event):
+        self.msg_text.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        return "break"
+
+    def set_mode_badge(self, mode: str):
+        """Met à jour le badge de mode (DOCUMENT / TEXTE / IMAGE) dans le header."""
+        if not hasattr(self, '_mode_canvas') or not self.window:
+            return
+        labels = {"document": "DOC", "texte": "TXT", "image": "IMG"}
+        text = labels.get(mode, "")
+        self._mode_canvas.itemconfig(self._mode_label, text=text)
 
 
     # ── Drag ──────────────────────────────────────────────
@@ -386,13 +583,19 @@ class PopupWindow:
 
     # ── Messages ──────────────────────────────────────────
     def _append(self, sender, text, sender_tag, text_tag):
-        if sender in ["OMI", "📷 ÉCRAN", "🎤 AUDIO"]:
+        from datetime import datetime
+        if sender in ["OMI", "ÉCRAN", "AUDIO"]:
             self.last_omi_message = text
             self.overlay.update_text(text)
+
         t = self.msg_text
         t.config(state="normal")
-        t.insert("end", f"\n{sender}\n", sender_tag)
+
+        # Timestamp discret
+        now = datetime.now().strftime("%H:%M")
+        t.insert("end", f"\n{sender}  {now}\n", "sender_" + ("omi" if sender_tag == "sender_omi" else "you"))
         t.insert("end", f"{text}\n", text_tag)
+
         t.config(state="disabled")
         t.see("end")
 
@@ -400,26 +603,48 @@ class PopupWindow:
         memory = self.assistant.get_memory()
         if not memory:
             self.msg_text.config(state="normal")
-            self.msg_text.insert("end", "\nEn attente d'activité...\n", "sender_omi")
+            self.msg_text.insert("end", "\nEn attente d'activité...\n", "text_system")
             self.msg_text.config(state="disabled")
             return
         for item in memory:
-            label = "📷 ÉCRAN" if item["type"] == "screen" else "🎤 AUDIO"
+            label = "ÉCRAN" if item["type"] == "vision" else "AUDIO"
             self._append(label, item["content"], "sender_omi", "text_omi")
 
     def _set_suggestion(self, text):
         if self.window and self.window.winfo_exists():
-            label = "🎤 AUDIO" if text.startswith("🎤") else "📷 ÉCRAN"
-            self._append(label, text.lstrip("🎤 "), "sender_omi", "text_omi")
+            label = "AUDIO" if text.startswith("🎤") else "ÉCRAN"
+            clean = text.lstrip("🎤 ")
+            self._append(label, clean, "sender_omi", "text_omi")
 
     def _send(self, event=None):
-        msg = self.input_var.get().strip()
+        if not hasattr(self, '_placeholder_active'):
+            msg = self.input_var.get().strip()
+        else:
+            msg = "" if self._placeholder_active else self.input_var.get().strip()
         if not msg:
             return
         self.input_var.set("")
+        if hasattr(self, '_placeholder_active'):
+            self._placeholder_active = False
+            if hasattr(self, '_entry'):
+                self._entry.config(fg=self.t["fg"])
         self._append("VOUS", msg, "sender_you", "text_you")
-        self._last_status = "Réflexion en cours..."
-        self._append("OMI", self._last_status, "sender_omi", "text_omi")
+        self._last_status = "Réflexion..."
+
+        # Insérer le message de chargement
+        t = self.msg_text
+        t.config(state="normal")
+        t.insert("end", "\nOMI\n", "sender_omi")
+        t.insert("end", "Réflexion...\n", "text_system")
+        t.config(state="disabled")
+        t.see("end")
+
+        # Démarrer l'animation
+        def _update_loading(text):
+            if self.window and self.window.winfo_exists():
+                self.window.after(0, lambda: self._do_update_status(text))
+
+        self._loader.start(_update_loading)
         threading.Thread(target=self._do_chat, args=(msg,), daemon=True).start()
 
     def trigger_vocal_chat(self, query):
@@ -447,12 +672,13 @@ class PopupWindow:
         if idx:
             end_idx = t.index(f"{idx} lineend")
             t.delete(idx, end_idx)
-            t.insert(idx, new_status)
+            t.insert(idx, new_status, "text_system")
             self._last_status = new_status
         t.config(state="disabled")
         t.see("end")
 
     def _replace_last(self, text):
+        self._loader.stop()
         self.last_omi_message = text
         self.overlay.update_text(text)
         t = self.msg_text
@@ -461,7 +687,7 @@ class PopupWindow:
         if idx:
             end_idx = t.index(f"{idx} lineend")
             t.delete(idx, end_idx)
-            t.insert(idx, text)
+            t.insert(idx, text, "text_omi")
         else:
             self._append("OMI", text, "sender_omi", "text_omi")
         t.config(state="disabled")
@@ -500,10 +726,14 @@ class PopupWindow:
 
     def _toggle_pause(self, event=None):
         is_paused = self.assistant.toggle_pause()
-        self.pause_label.config(text="▶" if is_paused else "⏸")
-        self._append("SYSTÈME",
-                     "Analyse en pause." if is_paused else "Analyse reprend.",
-                     "sender_omi", "text_omi")
+        if hasattr(self, 'pause_label'):
+            self.pause_label.config(text="▶" if is_paused else "⏸")
+        msg = "Analyse en pause." if is_paused else "Analyse reprend."
+        t = self.msg_text
+        t.config(state="normal")
+        t.insert("end", f"\n{msg}\n", "text_system")
+        t.config(state="disabled")
+        t.see("end")
 
     def _force_analyze(self, event=None):
         self._append("SYSTÈME", "Analyse en cours...", "sender_omi", "text_omi")
@@ -520,6 +750,33 @@ class PopupWindow:
 
     def _refresh_history(self): pass
     def _set_chat_response(self, text): pass
+
+    def update_theme(self, theme_name):
+        """Met à jour le thème en temps réel"""
+        if theme_name == self._current_theme_name:
+            return
+            
+        self._current_theme_name = theme_name
+        self.t = THEMES[theme_name]
+        
+        # Mettre à jour les couleurs des HoverButtons si la fenêtre existe
+        if self.window and self.window.winfo_exists() and hasattr(self, '_header_btns'):
+            for btn in self._header_btns:
+                btn.update_colors(self.t["fg_sec"], self.t["accent"], self.t["bg"])
+
+        if self.window and self.window.winfo_exists():
+            # Sauvegarde de l'état actuel
+            current_input = self.input_var.get()
+            is_visible = self.window.winfo_viewable()
+            
+            # On détruit et on recrée pour appliquer proprement les nouvelles couleurs
+            self.window.destroy()
+            self.window = None
+            
+            if is_visible:
+                self.show()
+                if hasattr(self, 'input_var'):
+                    self.input_var.set(current_input)
 
 
 # ─────────────────────────────────────────────────────────
