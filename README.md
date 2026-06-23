@@ -1,167 +1,222 @@
-# OMI — Assistant IA Personnel pour Windows
+# OMI — Personal AI Assistant
 
-OMI est un assistant IA qui tourne en arrière-plan dans ta barre des tâches. Il observe ton écran, écoute via le micro, accède à ton système de fichiers et peut interagir avec ton OS — le tout propulsé par Gemini.
+> An always-on AI assistant that runs silently in the background, watching your screen, listening via microphone, and helping you stay focused — powered by Google Gemini.
 
----
-
-## Fonctionnalités
-
-- **Vision** : Analyse ton écran toutes les quelques secondes et te fait des suggestions proactives
-- **Caméra** : Capture périodique via webcam (posture, concentration, habitudes)
-- **Micro** : Transcription en temps réel de ce qui est dit, stockée en base locale
-- **Agent OS** : Peut lister/lire/écrire des fichiers, voir les processus, gérer le presse-papier, exécuter des commandes, interagir avec des fenêtres en arrière-plan
-- **Chat contextuel** : Répond à tes questions en ayant accès à ton écran et à l'historique de session
-- **Thème automatique** : Suit le mode clair/sombre de Windows en temps réel
+**Supports Windows & Linux.**
 
 ---
 
-## Prérequis
+## Features
 
-- Windows 10 ou 11
-- Python 3.10+
-- Une clé API Gemini (voir ci-dessous)
+| Feature | Description |
+|---|---|
+| 🖥️ **Screen Vision** | Analyses your screen every few seconds and gives you proactive suggestions |
+| 📷 **Camera** | Periodic webcam capture to monitor posture, focus, and habits |
+| 🎙️ **Microphone** | Real-time transcription of speech, stored in a local database |
+| 🧠 **Long-term Memory** | Persistent user profile that survives restarts |
+| 🤖 **OS Agent** | Can list/read/write files, manage processes, control clipboard, run commands |
+| 💬 **Contextual Chat** | Answers your questions with full awareness of your screen and session history |
+| ⚡ **Hardware Detection** | Automatically detects if camera/microphone are available and adapts accordingly |
+| 🌙 **Auto Theme** | Follows system light/dark mode in real time (Windows) |
 
 ---
 
 ## Installation
 
-### 1. Cloner le projet
+### 🪟 Windows — Installer (.exe)
+
+Download and run **`OMI_Setup.exe`** from the [Releases](https://github.com/Tommy579/omi/releases) page.
+
+The installer will:
+1. Ask for your Gemini API key
+2. Install all Python dependencies into a virtual environment
+3. Configure OMI to start automatically on login
+4. Optionally launch OMI immediately
+
+> You can get a **free** Gemini API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+
+---
+
+### 🐧 Linux — Automated Script
+
+A single script handles everything automatically:
 
 ```bash
-git clone <url-du-repo>
-cd OMI
+# Clone the repository
+git clone https://github.com/Tommy579/omi
+cd omi
+
+# Run the installer (pass your API key directly or let the script ask)
+bash install_linux.sh AIzaYOUR_API_KEY
 ```
 
-### 2. Installer les dépendances
+The script will automatically:
+- Install missing system packages (`libportaudio2`, `python3-venv`, etc.) via `apt`
+- Create a Python virtual environment (`.venv`)
+- Install all Python dependencies
+- Optionally install Whisper for microphone transcription
+- Set up autostart via `~/.config/autostart/OmiAssistant.desktop` (GNOME/KDE)
+- Optionally launch OMI immediately in the background
+
+---
+
+### 🛠️ Manual Installation (both platforms)
 
 ```bash
+# 1. Clone the repository
+git clone https://github.com/Tommy579/omi
+cd omi
+
+# 2. Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate      # Linux/macOS
+# OR
+.venv\Scripts\activate         # Windows
+
+# 3. Install dependencies
 pip install -r requirements.txt
+
+# 4. Configure your API key
+echo "GEMINI_API_KEY=AIzaYOUR_KEY_HERE" > .env
+
+# 5. Launch
+python main.py
 ```
-
-### 3. Obtenir une clé API Gemini
-
-1. Va sur [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
-2. Connecte-toi avec ton compte Google
-3. Clique sur **Create API key**
-4. Copie la clé (commence par `AIza...`)
-
-### 4. Configurer la clé
-
-Ouvre `config.py` et remplace la valeur de `GEMINI_API_KEY` :
-
-```python
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "COLLE-TA-CLÉ-ICI")
-```
-
-> **Recommandé** : utilise une variable d'environnement plutôt que de coller la clé directement dans le fichier, surtout si tu utilises Git.
-
-### 5. Lancer
-
-```bash
-pythonw main.py
-```
-
-L'icône OMI apparaît dans la barre des tâches. Clique dessus pour ouvrir le panel.
 
 ---
 
-## Démarrage automatique avec Windows
+## Usage
 
-Lance le script d'installation :
-
-```bash
-python install.py
-```
-
-Il configure un fichier `.bat` dans le dossier Startup de Windows pour que OMI se lance automatiquement à chaque démarrage.
-
----
-
-## Utilisation
-
-| Action | Résultat |
+| Action | Result |
 |---|---|
-| Clic sur l'icône OMI | Ouvre le panel |
-| `↺` dans le panel | Force une analyse de l'écran maintenant |
-| `⏸` dans le panel | Met l'analyse automatique en pause |
-| `🎙️` dans le panel | Affiche l'historique des transcriptions micro |
-| `—` dans le panel | Réduit en filigrane (dernier message visible en bas à droite) |
-| `×` dans le panel | Ferme le panel |
-| Zone de chat en bas | Envoie un message à OMI avec contexte écran complet |
+| Click the OMI tray icon | Open the panel |
+| `↺` in the panel | Force a screen analysis now |
+| `⏸` in the panel | Pause automatic analysis |
+| `🎙️` in the panel | Show microphone transcript history |
+| `—` in the panel | Minimize to watermark (last message visible bottom-right) |
+| `×` in the panel | Close the panel |
+| Chat box at the bottom | Send a message to OMI with full screen context |
 
 ---
 
 ## Configuration (`config.py`)
 
-| Paramètre | Description | Défaut |
+| Parameter | Description | Default |
 |---|---|---|
-| `SCREEN_CAPTURE_INTERVAL` | Fréquence d'analyse écran (secondes) | `5` |
-| `ENABLE_CAMERA` | Active la capture webcam | `True` |
-| `CAMERA_CAPTURE_INTERVAL` | Fréquence capture caméra (secondes) | `30` |
-| `ENABLE_MICROPHONE` | Active la transcription micro | `True` |
-| `AUDIO_SEGMENT_DURATION` | Durée de chaque segment audio (secondes) | `10` |
-| `GEMINI_MODEL` | Modèle Gemini utilisé | `gemini-3.1-flash-lite-preview` |
-| `SYSTEM_PROMPT` | Personnalité et comportement de l'assistant | voir fichier |
+| `GEMINI_MODEL` | Gemini model to use | `gemini-3.1-flash-lite` |
+| `ENABLE_CAMERA` | Enable webcam capture | `True` |
+| `CAMERA_CAPTURE_INTERVAL` | Seconds between camera captures | `30` |
+| `ENABLE_MICROPHONE` | Enable microphone transcription (requires Whisper) | `True` |
+| `AUDIO_SEGMENT_DURATION` | Duration of each audio segment (seconds) | `10` |
+| `SCREEN_CAPTURE_INTERVAL` | Seconds between screen analyses | `10` |
+| `ALLOW_AUTONOMOUS_UI_INTERACTION` | Allow OMI to click/type without being asked | `False` |
+| `MAX_MEMORY_ITEMS` | Max items in short-term memory | `20` |
+| `SYSTEM_PROMPT` | AI personality and behaviour | see file |
+
+> All settings can also be overridden via environment variables in `.env`.
 
 ---
 
-## Structure du projet
+## Hardware Detection
+
+OMI automatically detects whether a **camera** and **microphone** are physically available on startup:
+
+- If **no camera** is found → camera capture is skipped and the Gemini API is notified not to make posture/appearance comments.
+- If **no microphone** is found → audio transcription thread is not started and Gemini is informed.
+
+This means OMI works correctly on headless servers, VMs, or any machine without these peripherals.
+
+---
+
+## Project Structure
 
 ```
-OMI/
-├── main.py               # Point d'entrée
-├── config.py             # ⚙️ Configuration
-├── install.py            # Script d'installation CLI
-├── requirements.txt      # Dépendances Python
+omi/
+├── main.py                # Entry point
+├── config.py              # ⚙️ Configuration
+├── install.py             # Interactive CLI installer
+├── install_linux.sh       # 🐧 Automated Linux installer
+├── build_release.py       # 🏗️ Builds Windows .exe release
+├── requirements.txt       # Python dependencies
 ├── core/
-│   ├── assistant.py      # Cerveau : vision, micro, appels Gemini
-│   ├── tools.py          # Outils OS accessibles par Gemini
-│   └── database.py       # Base SQLite pour l'historique audio
-└── ui/
-    └── tray.py           # Interface : icône système + popup
+│   ├── assistant.py       # Brain: vision, mic, Gemini calls, hardware detection
+│   ├── tools.py           # OS tools accessible by Gemini
+│   ├── database.py        # SQLite for audio history
+│   └── profile.py         # Long-term user memory
+├── ui/
+│   └── tray.py            # System tray icon + popup panel
+└── tests/
+    ├── test_tools.py       # Unit tests for OS tools
+    └── test_assistant.py   # Unit tests for hardware detection
 ```
 
 ---
 
-## Outils disponibles pour Gemini
+## Tools Available to Gemini
 
-Gemini peut appeler ces outils de manière autonome selon le contexte :
+Gemini can call these tools autonomously based on context:
 
-**Fichiers** : `list_directory`, `read_file`, `write_file`, `search_files`  
-**OS** : `execute_command`, `get_active_window_info`, `get_ui_tree`, `get_system_stats`  
-**Processus** : `list_processes`, `get_process_details`, `kill_process`  
-**Interface** : `mouse_click`, `type_text`, `press_key`, `background_interact`  
-**Réseau** : `get_network_connections`  
-**Système** : `get_clipboard`, `set_clipboard`, `get_machine_info`, `get_windows_event_logs`  
-**Apps** : `control_itunes`, `open_url`, `search_web`, `send_notification`  
-**Historique** : `query_transcript_history`
-
----
-
-## Dépendances principales
-
-```
-google-genai          # API Gemini (nouveau SDK)
-mss                   # Capture d'écran
-Pillow                # Traitement image
-opencv-python         # Capture webcam
-pystray               # Icône système tray
-sounddevice + numpy   # Capture audio
-openai-whisper        # Transcription locale
-psutil                # Monitoring processus
-pywinauto             # Interaction fenêtres en arrière-plan
-pyodbc                # Accès à l'index Windows Search
-pyperclip             # Presse-papier
-pygetwindow           # Info fenêtres
-pyautogui             # Contrôle souris/clavier
-pywin32               # APIs Windows (logs événements)
-win10toast-persist    # Notifications Windows
-```
+| Category | Tools |
+|---|---|
+| **Files** | `list_directory`, `read_file`, `write_file`, `search_files` |
+| **OS** | `execute_command`, `get_active_window_info`, `get_ui_tree`, `get_system_stats` |
+| **Processes** | `list_processes`, `get_process_details`, `kill_process` |
+| **UI Interaction** | `mouse_click`, `type_text`, `press_key`, `background_interact` *(restricted by default)* |
+| **Network** | `get_network_connections` |
+| **System** | `get_clipboard`, `set_clipboard`, `get_machine_info`, `get_windows_event_logs` |
+| **Apps** | `control_itunes`, `open_url`, `search_web`, `send_notification` |
+| **Memory** | `get_user_profile`, `update_user_profile`, `query_transcript_history` |
 
 ---
 
-## Sécurité
+## Key Dependencies
 
-- Ne commite jamais ta clé API dans Git
-- Le fichier `.env` est dans `.gitignore` — tu peux y stocker `GEMINI_API_KEY=ta_clé` et la lire via `os.getenv()`
-- `execute_command` et `write_file` donnent à Gemini un accès complet à ton système — à utiliser en connaissance de cause
+| Package | Purpose |
+|---|---|
+| `google-genai` | Gemini API (new SDK) |
+| `mss` | Screen capture |
+| `Pillow` | Image processing |
+| `opencv-python` | Webcam capture |
+| `pystray` | System tray icon |
+| `sounddevice` + `numpy` | Audio capture |
+| `openai-whisper` | Local speech transcription *(optional)* |
+| `psutil` | Process monitoring |
+| `pywinauto` | Window interaction *(Windows only)* |
+| `pyodbc` | Windows Search index *(Windows only)* |
+| `pyperclip` | Clipboard access |
+| `pyautogui` | Mouse/keyboard control |
+| `pywin32` | Windows event logs *(Windows only)* |
+| `pyaudiowpatch` | WASAPI loopback audio *(Windows only)* |
+| `python-dotenv` | `.env` file loading |
+
+---
+
+## Building the Windows Installer
+
+To rebuild the `.exe` files from source:
+
+```bash
+python build_release.py
+```
+
+This produces two files in `dist/`:
+- **`OmiAssistant.exe`** — the main application
+- **`OMI_Setup.exe`** — the installer to distribute
+
+Requires PyInstaller (`pip install pyinstaller`).
+
+---
+
+## Running Tests
+
+```bash
+python -m unittest discover -s tests
+```
+
+---
+
+## Security
+
+- **Never commit your API key to Git** — use `.env` (already in `.gitignore`)
+- `execute_command` and `write_file` give Gemini full system access — use with awareness
+- `ALLOW_AUTONOMOUS_UI_INTERACTION` is `False` by default — Gemini won't click or type unless you explicitly ask
