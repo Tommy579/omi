@@ -5,9 +5,18 @@ Script d'automatisation des Releases pour OMI.
 """
 
 import os
+import sys
 import subprocess
 import shutil
 from pathlib import Path
+
+# Force UTF-8 encoding for standard output on Windows to avoid UnicodeEncodeError
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 APP_DIR = Path(__file__).parent.resolve()
 DIST_DIR = APP_DIR / "dist"
@@ -32,7 +41,7 @@ def main():
     # 1. Compiler OmiAssistant
     # On n'inclut PAS le .env ici car le Setup s'en chargera pour l'utilisateur
     cmd_assistant = [
-        "pyinstaller",
+        sys.executable, "-m", "PyInstaller",
         "--onefile",
         "--windowed",
         "--name", "OmiAssistant",
@@ -48,7 +57,7 @@ def main():
     # 3. Compiler OMI_Setup
     # On inclut OmiAssistant et l'icône dans le bundle du Setup
     cmd_setup = [
-        "pyinstaller",
+        sys.executable, "-m", "PyInstaller",
         "--onefile",
         "--windowed",
         "--name", "OMI_Setup",
