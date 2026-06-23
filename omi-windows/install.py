@@ -50,6 +50,10 @@ def install_dependencies(venv_python):
         "numpy",
         "pyautogui",
         "requests",
+        "opencv-python",
+        "psutil",
+        "pyperclip",
+        "python-dotenv",
     ]
     if sys.platform == "win32":
         packages.extend(["pygetwindow", "win10toast-persist"])
@@ -114,7 +118,7 @@ Comment=Assistant IA Personnel
         print(f"\n  L'assistant se lancera automatiquement au prochain démarrage de Linux.")
 
 
-def build_exe():
+def build_exe(venv_python):
     exe_name = f"{APP_NAME}.exe" if sys.platform == "win32" else APP_NAME
     step(f"📦 Construction du fichier {exe_name} (optionnel)")
     build = input(f"  Construire un {exe_name} standalone ? (y/n) : ").strip().lower()
@@ -124,12 +128,12 @@ def build_exe():
         return
     
     print("  Installation de PyInstaller...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller", "-q"])
+    subprocess.check_call([str(venv_python), "-m", "pip", "install", "pyinstaller", "-q"])
     
     print("  Construction en cours (peut prendre quelques minutes)...")
     sep = ";" if sys.platform == "win32" else ":"
     cmd = [
-        "pyinstaller",
+        str(venv_python), "-m", "PyInstaller",
         "--onefile",
         "--windowed",
         "--name", APP_NAME,
@@ -189,7 +193,7 @@ def main():
         install_dependencies(venv_python)
         setup_api_key()
         setup_autostart(venv_python, venv_python_w)
-        build_exe()
+        build_exe(venv_python)
         launch_now(venv_python_w)
         
         print("\n" + "═"*50)

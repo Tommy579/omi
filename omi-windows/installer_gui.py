@@ -506,76 +506,8 @@ class InstallerApp:
             # 3. Configuration (.env)
             self.log("Configuration des variables d'environnement...")
             env_file = self.install_path / ".env"
-            
-            # Résoudre l'objectif selon le persona sélectionné
             if self.selected_persona_id == "custom":
                 objective = self.custom_objective.get().strip()
-            else:
-                objective = next(p for p in PERSONAS if p["id"] == self.selected_persona_id)["objective"]
-
-            if not env_file.exists():
-                env_content = (
-                    f"GEMINI_API_KEY={key}\n"
-                    f"GEMINI_MODEL={self.selected_model}\n"
-                    f"OMI_PERSONA={self.selected_persona_id}\n"
-                    f"OMI_OBJECTIVE={objective}\n"
-                )
-                env_file.write_text(env_content, encoding="utf-8")
-            else:
-                # Mettre à jour les variables dans le .env existant si elles sont définies/changées
-                import re
-                old_content = env_file.read_text(encoding="utf-8")
-                new_content = old_content
-                
-                if key:
-                    if "GEMINI_API_KEY=" in new_content:
-                        new_content = re.sub(r"GEMINI_API_KEY=.*", f"GEMINI_API_KEY={key}", new_content)
-                    else:
-                        new_content += f"\nGEMINI_API_KEY={key}"
-                
-                if self.selected_model:
-                    if "GEMINI_MODEL=" in new_content:
-                        new_content = re.sub(r"GEMINI_MODEL=.*", f"GEMINI_MODEL={self.selected_model}", new_content)
-                    else:
-                        new_content += f"\nGEMINI_MODEL={self.selected_model}"
-                
-                if self.selected_persona_id:
-                    if "OMI_PERSONA=" in new_content:
-                        new_content = re.sub(r"OMI_PERSONA=.*", f"OMI_PERSONA={self.selected_persona_id}", new_content)
-                    else:
-                        new_content += f"\nOMI_PERSONA={self.selected_persona_id}"
-                    
-                    if "OMI_OBJECTIVE=" in new_content:
-                        new_content = re.sub(r"OMI_OBJECTIVE=.*", f"OMI_OBJECTIVE={objective}", new_content)
-                    else:
-                        new_content += f"\nOMI_OBJECTIVE={objective}"
-                
-                env_file.write_text(new_content, encoding="utf-8")
-
-            # 5. Raccourcis
-            if sys.platform == "win32":
-                desktop = Path(os.path.join(os.environ['USERPROFILE'], 'Desktop'))
-                start_menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"     
-                startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
-                shortcut_ext = ".lnk"
-            else:
-                desktop = Path.home() / "Desktop"
-                start_menu = Path.home() / ".local" / "share" / "applications"
-                startup_dir = Path.home() / ".config" / "autostart"
-                shortcut_ext = ".desktop"
- 
-            target_exe = self.install_path / exe_name
- 
-            create_shortcut(str(target_exe), desktop / f"OMI{shortcut_ext}", str(self.install_path))
-            create_shortcut(str(target_exe), start_menu / f"OMI{shortcut_ext}", str(self.install_path))
-            create_shortcut(str(target_exe), startup_dir / f"OMI{shortcut_ext}", str(self.install_path))
- 
-            self.progress['value'] = 100
-            self.root.update()
- 
-            messagebox.showinfo("Succès", "OMI a été mis à jour !\n\nL'assistant se lancera automatiquement au démarrage.\nTes données et ton profil ont été conservés.")
-            if sys.platform == "win32":
-                os.startfile(target_exe)
             else:
                 persona = next(p for p in PERSONAS if p["id"] == self.selected_persona_id)
                 objective = persona["objective"]
