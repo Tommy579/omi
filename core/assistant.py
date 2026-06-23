@@ -44,8 +44,49 @@ class Assistant:
     def __init__(self):
         self.client = genai.Client(api_key=GEMINI_API_KEY)
         
+        # Détection de la caméra
+        self._camera = None
+        self.is_camera_available = False
+        if ENABLE_CAMERA:
+            try:
+                self._camera = cv2.VideoCapture(0)
+                if self._camera is not None and self._camera.isOpened():
+                    self.is_camera_available = True
+                else:
+                    self._camera = None
+                    print("[Caméra] Aucun périphérique trouvé.")
+            except Exception as e:
+                print(f"[Caméra] Erreur init : {e}")
+
+        # Détection du microphone
+        self.is_mic_available = False
+        if ENABLE_MICROPHONE:
+            try:
+                import sounddevice as sd
+                devices = sd.query_devices()
+                if any(d.get('max_input_channels', 0) > 0 for d in devices):
+                    self.is_mic_available = True
+                else:
+                    print("[Micro] Aucun microphone détecté sur l'appareil.")
+            except Exception as e:
+                print(f"[Micro] Erreur détection microphone : {e}")
+
         # On définit un prompt système plus complet pour le côté agent
         enhanced_prompt = SYSTEM_PROMPT + "\n\n"
+        
+        # Ajout des informations sur la disponibilité du matériel
+        hardware_info = "### DISPONIBILITÉ DU MATÉRIEL (CRITIQUE) :"
+        if not self.is_camera_available:
+            hardware_info += "\n- **CAMÉRA NON DISPONIBLE** : Cet appareil n'a pas de caméra fonctionnelle ou son accès est désactivé. Ne fais JAMAIS de commentaires sur l'apparence physique de l'utilisateur, sa posture, ou s'il se ronge les ongles. Ignore toutes les consignes du système liées à l'analyse de la caméra."
+        else:
+            hardware_info += "\n- **CAMÉRA DISPONIBLE** : Tu as accès à la caméra de l'utilisateur."
+
+        if not self.is_mic_available:
+            hardware_info += "\n- **MICROPHONE NON DISPONIBLE** : Cet appareil n'a pas de microphone fonctionnel ou son accès est désactivé. La transcription vocale est inactive. Ignore toutes les consignes du système liées à la transcription audio."
+        else:
+            hardware_info += "\n- **MICROPHONE DISPONIBLE** : La transcription vocale (micro) est active."
+            
+        enhanced_prompt += hardware_info + "\n\n"
         
         if ALLOW_AUTONOMOUS_UI_INTERACTION:
             enhanced_prompt += """
@@ -122,16 +163,6 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
         self._unchanged_count = 0
         self._doc_cache: dict = {"title": None, "path": None, "content": None}
 
-        self._camera = None
-        if ENABLE_CAMERA:
-            try:
-                self._camera = cv2.VideoCapture(0)
-                if not self._camera.isOpened():
-                    self._camera = None
-                    print("[Caméra] Aucun périphérique trouvé.")
-            except Exception as e:
-                print(f"[Caméra] Erreur init : {e}")
-
         # Charger la mémoire persistante depuis SQLite
         try:
             from core.database import load_chat_history
@@ -160,7 +191,7 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
     def start(self):
         self.is_running = True
         threading.Thread(target=self._vision_loop, daemon=True).start()
-        if ENABLE_MICROPHONE:
+        if self.is_mic_available:
             try:
                 threading.Thread(target=self._mic_loop, daemon=True).start()
             except Exception as e:
@@ -197,7 +228,7 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                 print("[Caméra] Périphérique libéré (en pause).")
         else:
             # Réouvrir la caméra
-            if ENABLE_CAMERA and self._camera is None:
+            if self.is_camera_available and self._camera is None:
                 try:
                     import cv2
                     self._camera = cv2.VideoCapture(0)
@@ -364,7 +395,7 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                         continue
                     images = [screen_img]
                     now = time.time()
-                    if ENABLE_CAMERA and (now - self.last_camera_time) >= CAMERA_CAPTURE_INTERVAL:
+                    if self.is_camera_available and (now - self.last_camera_time) >= CAMERA_CAPTURE_INTERVAL:
                         camera_img = self._capture_camera()
                         if camera_img:
                             images.append(camera_img)
