@@ -129,6 +129,43 @@ def background_interact(window_title: str, element_name: str, action: str = "cli
     except Exception as e:
         return {"error": str(e)}
 
+def click_element_by_name(element_name: str, window_title: str = None, action: str = 'click', text: str = None):
+    """Clicks or types into a UI element found by its text label, without moving the physical mouse.
+    - element_name: the target element's label text.
+    - window_title: optional, window title filter.
+    - action: 'click' or 'type'.
+    - text: text to type when action is 'type'.
+    """
+    if not Desktop:
+        return {"error": "Cet outil est uniquement supporté sur Windows."}
+    try:
+        if window_title:
+            app = Desktop(backend="uia").window(title_re=f".*{window_title}.*")
+        else:
+            app = Desktop(backend="uia").active_window()
+            
+        try:
+            element = app.child_window(title=element_name, control_type="Button")
+            element.wait('exists', timeout=1)
+        except Exception:
+            element = app.child_window(title=element_name)
+            
+        if action == "click":
+            try:
+                element.invoke()
+                return {"status": f"Clic (invoke) sur '{element_name}' effectué"}
+            except Exception:
+                element.click_input(simulate_click=True)
+                return {"status": f"Clic simulé sur '{element_name}'"}
+        elif action == "type":
+            element.type_keys(text, with_spaces=True)
+            return {"status": f"Texte '{text}' envoyé à '{element_name}'"}
+        else:
+            return {"error": f"Action non supportée: {action}"}
+    except Exception as e:
+        return {"error": f"Élément '{element_name}' non trouvé ou erreur: {str(e)}. Utilisez get_ui_tree() pour vérifier le nom de l'élément."}
+
+
 def control_itunes(command: str):
     """Contrôle iTunes en arrière-plan (Play, Pause, Next, Previous, Volume)."""
     if not comtypes:
@@ -142,6 +179,40 @@ def control_itunes(command: str):
         return {"status": f"Commande iTunes '{command}' exécutée."}
     except Exception as e:
         return {"error": f"iTunes n'est probablement pas lancé ou erreur : {str(e)}"}
+
+def smart_media_control(action: str, app_hint: str = None):
+    """Controls media playback entirely in the background using native Windows media key events.
+    Works with any app that handles audio (Spotify, browser, VLC, Deezer, Apple Music, etc.).
+    - action: 'play', 'pause', 'play_pause', 'next', 'previous', 'stop'
+    - app_hint: optional, set to 'itunes' only if the user explicitly asks for iTunes
+    """
+    if app_hint and app_hint.lower() == 'itunes':
+        return control_itunes(action)
+    
+    if platform.system() != "Windows":
+        return {"error": "Cet outil est uniquement supporté sur Windows."}
+    
+    try:
+        import ctypes
+        vk_map = {
+            'play': 0xB3,         # VK_MEDIA_PLAY_PAUSE
+            'pause': 0xB3,
+            'play_pause': 0xB3,
+            'next': 0xB0,         # VK_MEDIA_NEXT_TRACK
+            'previous': 0xB1,     # VK_MEDIA_PREV_TRACK
+            'stop': 0xB2          # VK_MEDIA_STOP
+        }
+        vk = vk_map.get(action.lower())
+        if not vk:
+            return {"error": f"Action non supportée: {action}."}
+        
+        # Press key
+        ctypes.windll.user32.keybd_event(vk, 0, 0, 0)
+        # Release key
+        ctypes.windll.user32.keybd_event(vk, 0, 2, 0)
+        return {"status": f"Commande média '{action}' envoyée globalement."}
+    except Exception as e:
+        return {"error": str(e)}
 
 def wait_for_ui(seconds: float):
     """Met en pause l'exécution pour laisser le temps à une application de s'ouvrir ou à l'interface de se mettre à jour.
@@ -576,7 +647,9 @@ TOOLS_LIST = [
     search_web,
     wait_for_ui,
     get_ui_tree,
+    click_element_by_name,
     background_interact,
+    smart_media_control,
     control_itunes,
     get_system_stats,
     list_processes,
