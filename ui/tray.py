@@ -753,3 +753,80 @@ class PopupWindow:
 
     def _refresh_history(self): pass
     def _set_chat_response(self, text): pass
+
+
+# ─────────────────────────────────────────────────────────
+# Tray
+# ─────────────────────────────────────────────────────────
+
+def create_icon_image():
+    size = 64
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.ellipse([4, 4, 60, 60], fill="#111111")
+    draw.ellipse([20, 20, 44, 44], fill="#FFFFFF")
+    draw.ellipse([28, 28, 36, 36], fill="#111111")
+    return img
+
+
+class TrayApp:
+    def __init__(self, assistant):
+        self.assistant = assistant
+        self.popup = None
+        self._root = None
+        self._current_theme_name = get_windows_theme()
+
+    def run(self):
+        self._root = tk.Tk()
+        self._root.withdraw()
+        self._root.title("OmiAssistant")
+
+        self.popup = PopupWindow(self.assistant, self._root)
+        self.assistant.on_suggestion_callback = self._on_new_suggestion
+        self.assistant.on_transcript_callback = self._on_new_transcript
+        self.assistant.on_vocal_query_callback = self._on_vocal_query
+
+        # Lancer la surveillance du thème Windows
+        self._check_theme_loop()
+
+        icon_img = create_icon_image()
+        menu = pystray.Menu(
+            pystray.MenuItem("Ouvrir", self._open_popup, default=True),
+            pystray.MenuItem("Quitter", self._quit),
+        )
+        self.icon = pystray.Icon("OmiAssistant", icon_img, "Omi", menu=menu)
+
+        threading.Thread(target=self.icon.run, daemon=True).start()
+        self._root.mainloop()
+
+    def _check_theme_loop(self):
+        """Vérifie périodiquement si le thème Windows a changé"""
+        new_theme = get_windows_theme()
+        if new_theme != self._current_theme_name:
+            self._current_theme_name = new_theme
+            if self.popup:
+                self.popup.update_theme(new_theme)
+        
+        if self._root:
+            self._root.after(3000, self._check_theme_loop)
+
+    def _open_popup(self, icon=None, item=None):
+        self._root.after(0, self.popup.show)
+
+    def _on_new_suggestion(self, text):
+        if self.popup and self.popup.window and self.popup.window.winfo_exists():
+            self._root.after(0, lambda: self.popup._set_suggestion(text))
+
+    def _on_new_transcript(self, text):
+        if self.popup and self.popup.window and self.popup.window.winfo_exists():
+            self._root.after(0, lambda: self.popup._add_transcript_to_ui(text))
+
+    def _on_vocal_query(self, query):
+        if self.popup:
+            self._root.after(0, lambda: self.popup.trigger_vocal_chat(query))
+
+    def _quit(self, icon, item):
+        self.assistant.stop()
+        self.icon.stop()
+        self._root.after(0, self._root.destroy)
+
