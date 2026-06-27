@@ -40,6 +40,37 @@ from core.database import add_transcript, query_transcripts
 from core.profile import get_profile_summary
 
 
+def sanitize_history(history):
+    """Sanitise l'historique pour éviter les erreurs d'appels de fonction orphelins."""
+    if not history:
+        return []
+    clean_history = list(history)
+    while clean_history:
+        last_turn = clean_history[-1]
+        parts = last_turn.parts if hasattr(last_turn, "parts") and last_turn.parts else []
+        has_func_call = any(hasattr(p, "function_call") and p.function_call for p in parts)
+        has_func_resp = any(hasattr(p, "function_response") and p.function_response for p in parts)
+        
+        # Un historique ne peut pas se terminer par un appel de fonction sans réponse
+        if has_func_call:
+            clean_history.pop()
+            continue
+            
+        # Une réponse de fonction doit être précédée par un appel de fonction
+        if has_func_resp:
+            if len(clean_history) < 2:
+                clean_history.pop()
+                continue
+            prev_turn = clean_history[-2]
+            prev_parts = prev_turn.parts if hasattr(prev_turn, "parts") and prev_turn.parts else []
+            prev_has_func_call = any(hasattr(p, "function_call") and p.function_call for p in prev_parts)
+            if not prev_has_func_call:
+                clean_history.pop()
+                continue
+        break
+    return clean_history
+
+
 class Assistant:
     def __init__(self):
         self.client = genai.Client(api_key=GEMINI_API_KEY)
@@ -257,7 +288,12 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
             return None
         try:
             from pywinauto import Desktop
-            app = active_window or Desktop(backend="uia").active_window()
+            import pygetwindow as gw
+            app = active_window
+            if not app:
+                active = gw.getActiveWindow()
+                if active:
+                    app = Desktop(backend="uia").window(handle=active._hWnd)
             if app is None:
                 return None
 
@@ -457,7 +493,10 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
         if os.name == 'nt':
             try:
                 from pywinauto import Desktop
-                _active_win = Desktop(backend="uia").active_window()
+                import pygetwindow as gw
+                active = gw.getActiveWindow()
+                if active:
+                    _active_win = Desktop(backend="uia").window(handle=active._hWnd)
             except Exception:
                 pass
 
@@ -538,40 +577,44 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
     def _trim_chat_history_if_needed(self, session):
         try:
             history = session.get_history()
-            if len(history) <= MAX_CHAT_TURNS * 2:
-                return None
+            
+            clean_history = sanitize_history(history)
+            history_modified = len(clean_history) != len(history)
+            
+            if history_modified or len(clean_history) > MAX_CHAT_TURNS * 2:
+                recent = clean_history
+                if len(recent) > MAX_CHAT_TURNS * 2:
+                    recent = recent[-(MAX_CHAT_TURNS * 2):]
+                    # Avancer jusqu'à un tour "user" propre (pas une function_response)
+                    start = 0
+                    for i, turn in enumerate(recent):
+                        if turn.role == "user":
+                            parts = turn.parts if hasattr(turn, "parts") else []
+                            is_func_response = any(
+                                hasattr(p, "function_response") and p.function_response
+                                for p in parts
+                            )
+                            if not is_func_response:
+                                start = i
+                                break
+                    if start == 0:
+                        recent = recent[-6:]
+                    else:
+                        recent = recent[start:]
+                
+                recent = sanitize_history(recent)
+                
+                profile_summary = get_profile_summary()
+                prompt_with_profile = self._enhanced_prompt
+                if profile_summary:
+                    prompt_with_profile = self._enhanced_prompt + f"\n\n{profile_summary}"
 
-            recent = history[-(MAX_CHAT_TURNS * 2):]
-
-            # Avancer jusqu'à un tour "user" propre (pas une function_response)
-            start = 0
-            for i, turn in enumerate(recent):
-                if turn.role == "user":
-                    parts = turn.parts if hasattr(turn, "parts") else []
-                    is_func_response = any(
-                        hasattr(p, "function_response") and p.function_response
-                        for p in parts
-                    )
-                    if not is_func_response:
-                        start = i
-                        break
-
-            if start == 0:
-                # Fallback sécurisé : retenir seulement les 6 derniers messages pour éviter les boucles
-                recent = recent[-6:]
-            else:
-                recent = recent[start:]
-
-            profile_summary = get_profile_summary()
-            prompt_with_profile = self._enhanced_prompt
-            if profile_summary:
-                prompt_with_profile = self._enhanced_prompt + f"\n\n{profile_summary}"
-
-            return self.client.chats.create(
-                model=GEMINI_MODEL,
-                config={"system_instruction": prompt_with_profile, "tools": TOOLS_LIST},
-                history=recent
-            )
+                return self.client.chats.create(
+                    model=GEMINI_MODEL,
+                    config={"system_instruction": prompt_with_profile, "tools": TOOLS_LIST},
+                    history=recent
+                )
+            return None
         except Exception as e:
             print(f"[Chat] Erreur trim historique : {e}")
             return None
@@ -618,7 +661,7 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                 default_speakers = p.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
                 for i in range(p.get_device_count()):
                     dev = p.get_device_info_by_index(i)
-                    if (dev["name"] == default_speakers["name"]
+                    if (default_speakers["name"] in dev["name"]
                             and dev["hostApi"] == wasapi_info["index"]
                             and dev.get("isLoopbackDevice")):
                         loopback_device_index = i
@@ -650,6 +693,7 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
 
         def capture_mic():
             """Capture et transcrit le micro physique en continu."""
+            fail_count = 0
             while self.is_running:
                 if self.paused:
                     time.sleep(1)
@@ -685,28 +729,73 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                                 query = text[idx + 3:].strip().lstrip(",").strip()
                                 if query and self.on_vocal_query_callback:
                                     self.on_vocal_query_callback(query)
+                    fail_count = 0
                 except Exception as e:
-                    print(f"[Micro] Erreur capture voix : {e}")
+                    fail_count += 1
+                    print(f"[Micro] Erreur capture voix ({fail_count}/3) : {e}")
+                    if fail_count >= 3:
+                        print("[Micro] Échecs consécutifs répétés — désactivation du thread micro.")
+                        break
                     time.sleep(5)
 
         def capture_loopback():
             """Capture et transcrit l'audio système (loopback) en continu."""
-            if loopback_device_index is None:
-                print("[Loopback] Aucun device détecté — thread loopback inactif.")
+            pyaudio_loopback_index = None
+            if os.name == 'nt':
+                try:
+                    import pyaudiowpatch as pyaudio
+                    p_check = pyaudio.PyAudio()
+                    wasapi_info = p_check.get_host_api_info_by_type(pyaudio.paWASAPI)
+                    default_speakers = p_check.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
+                    for i in range(p_check.get_device_count()):
+                        dev = p_check.get_device_info_by_index(i)
+                        if (default_speakers["name"] in dev["name"]
+                                and dev["hostApi"] == wasapi_info["index"]
+                                and dev.get("isLoopbackDevice")):
+                            pyaudio_loopback_index = i
+                            break
+                    p_check.terminate()
+                except Exception as e:
+                    print(f"[Loopback] Impossible de détecter le loopback WASAPI (PyAudio) : {e}")
+
+            sd_loopback_index = None
+            keywords = ["mixage", "stereo mix", "loopback", "what u hear", "voicemeeter output", "cable output", "monitor"]
+            try:
+                devices = sd.query_devices()
+                for i, dev in enumerate(devices):
+                    if dev['max_input_channels'] > 0:
+                        if any(k in dev['name'].lower() for k in keywords):
+                            sd_loopback_index = i
+                            break
+            except Exception as e:
+                print(f"[Loopback] Impossible de requêter les devices SoundDevice : {e}")
+
+            if pyaudio_loopback_index is None and sd_loopback_index is None:
+                print("[Loopback] Aucun périphérique loopback détecté. Thread inactif.")
                 return
 
-            print(f"[Loopback] Démarrage capture sur device index {loopback_device_index}")
+            print(f"[Loopback] Démarrage WASAPI PyAudio={pyaudio_loopback_index}, SoundDevice={sd_loopback_index}")
 
+            p = None
+            if os.name == 'nt' and pyaudio_loopback_index is not None:
+                try:
+                    import pyaudiowpatch as pyaudio
+                    p = pyaudio.PyAudio()
+                except Exception as e:
+                    print(f"[Loopback] Erreur init PyAudio : {e}")
+
+            fail_count = 0
             while self.is_running:
                 if self.paused:
                     time.sleep(1)
                     continue
                 try:
-                    if os.name == 'nt':
+                    success = False
+                    arr = None
+                    
+                    if p is not None and pyaudio_loopback_index is not None:
                         try:
-                            import pyaudiowpatch as pyaudio
-                            p = pyaudio.PyAudio()
-                            dev_info = p.get_device_info_by_index(loopback_device_index)
+                            dev_info = p.get_device_info_by_index(pyaudio_loopback_index)
                             channels = int(dev_info["maxInputChannels"])
                             dev_sample_rate = int(dev_info["defaultSampleRate"])
                             stream = p.open(
@@ -714,7 +803,7 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                                 channels=channels,
                                 rate=dev_sample_rate,
                                 input=True,
-                                input_device_index=loopback_device_index,
+                                input_device_index=pyaudio_loopback_index,
                                 frames_per_buffer=1024
                             )
                             frames = []
@@ -722,29 +811,30 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                                 frames.append(stream.read(1024, exception_on_overflow=False))
                             stream.stop_stream()
                             stream.close()
-                            p.terminate()
 
                             raw = b"".join(frames)
                             arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
                             if channels > 1:
                                 arr = arr.reshape(-1, channels).mean(axis=1)
+                            success = True
                         except Exception as e:
-                            print(f"[Loopback] Erreur WASAPI loopback, fallback sounddevice : {e}")
+                            print(f"[Loopback] Échec WASAPI loopback (PyAudio) : {e}. Fallback sounddevice...")
+                    
+                    if not success and sd_loopback_index is not None:
+                        try:
                             loopback_audio = sd.rec(
                                 int(AUDIO_SEGMENT_DURATION * sample_rate),
                                 samplerate=sample_rate, channels=1, dtype="float32",
-                                device=loopback_device_index
+                                device=sd_loopback_index
                             )
                             sd.wait()
                             arr = loopback_audio.flatten()
-                    else:
-                        loopback_audio = sd.rec(
-                            int(AUDIO_SEGMENT_DURATION * sample_rate),
-                            samplerate=sample_rate, channels=1, dtype="float32",
-                            device=loopback_device_index
-                        )
-                        sd.wait()
-                        arr = loopback_audio.flatten()
+                            success = True
+                        except Exception as e:
+                            print(f"[Loopback] Échec capture fallback (SoundDevice) : {e}")
+
+                    if not success:
+                        raise RuntimeError("Aucune méthode de capture loopback n'a fonctionné.")
 
                     audio_level = np.abs(arr).mean()
                     print(f"[Loopback] Niveau audio : {audio_level:.4f}")
@@ -766,9 +856,20 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
                     else:
                         print("[Loopback] Silence détecté, pas de transcription.")
 
+                    fail_count = 0
                 except Exception as e:
-                    print(f"[Loopback] Erreur capture : {e}")
+                    fail_count += 1
+                    print(f"[Loopback] Erreur capture ({fail_count}/3) : {e}")
+                    if fail_count >= 3:
+                        print("[Loopback] Échecs consécutifs répétés — désactivation du thread loopback.")
+                        break
                     time.sleep(5)
+
+            if p is not None:
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
 
         # Lancer les deux captures en parallèle
         t_mic = threading.Thread(target=capture_mic, daemon=True)

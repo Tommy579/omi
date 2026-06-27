@@ -15,4 +15,6 @@ python-dotenv
 pyaudiowpatch; sys_platform == 'win32'
 pyodbc; sys_platform == 'win32'
 pywinauto; sys_platform == 'win32'
+pycaw; sys_platform == 'win32'
+
 

@@ -245,6 +245,7 @@ class PopupWindow:
         self.show_transcripts = False
         self.last_omi_message = ""
         self.overlay = OverlayWindow(self.root)
+        self.trans_btn = None # FIX: Initialisation explicite
 
     def update_theme(self, theme_name):
         """Met à jour le thème en temps réel"""
@@ -357,29 +358,29 @@ class PopupWindow:
         # Boutons de contrôle (droite)
         PAD_RIGHT = 14
         btn_y = HEADER_H // 2
-        btn_specs = [
-            ("×",  "Segoe UI", 16, self.close_completely, W - PAD_RIGHT),
-            ("—",  "Segoe UI", 11, self.minimize,         W - PAD_RIGHT - 28),
-            ("⏸",  "Segoe UI", 10, self._toggle_pause,    W - PAD_RIGHT - 56),
-            ("🎙️", "Segoe UI", 10, self._toggle_transcripts, W - PAD_RIGHT - 82),
-            ("↺",  "Segoe UI", 13, self._force_analyze,   W - PAD_RIGHT - 108),
-        ]
-        self._header_btns = []
-        for txt, font_name, font_size, cmd, x in btn_specs:
-            btn = HoverButton(root_canvas,
-                              normal_fg=t["fg_sec"],
-                              hover_fg=t["accent"],
-                              bg=t["bg"],
-                              text=txt,
-                              font=(font_name, font_size),
-                              cursor="hand2")
-            root_canvas.create_window(x, btn_y, anchor="e", window=btn)
-            btn.bind("<Button-1>", lambda e, c=cmd: c())
-            self._header_btns.append(btn)
+        
+        # Création explicite des boutons pour gestion par attributs
+        btn_close = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="×", font=("Segoe UI", 16), cursor="hand2")
+        btn_close.bind("<Button-1>", self.close_completely)
+        root_canvas.create_window(W - PAD_RIGHT, btn_y, anchor="e", window=btn_close)
 
-        self.pause_label = self._header_btns[2]  # référence pour toggle_pause
+        btn_min = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="—", font=("Segoe UI", 11), cursor="hand2")
+        btn_min.bind("<Button-1>", self.minimize)
+        root_canvas.create_window(W - PAD_RIGHT - 28, btn_y, anchor="e", window=btn_min)
 
-        # Mode badge (en bas à droite de la titlebar)
+        self.pause_label = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="⏸", font=("Segoe UI", 10), cursor="hand2")
+        self.pause_label.bind("<Button-1>", self._toggle_pause)
+        root_canvas.create_window(W - PAD_RIGHT - 56, btn_y, anchor="e", window=self.pause_label)
+
+        self.trans_btn = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="🎙️", font=("Segoe UI", 10), cursor="hand2")
+        self.trans_btn.bind("<Button-1>", self._toggle_transcripts)
+        root_canvas.create_window(W - PAD_RIGHT - 82, btn_y, anchor="e", window=self.trans_btn)
+
+        btn_refresh = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="↺", font=("Segoe UI", 13), cursor="hand2")
+        btn_refresh.bind("<Button-1>", self._force_analyze)
+        root_canvas.create_window(W - PAD_RIGHT - 108, btn_y, anchor="e", window=btn_refresh)
+
+        # Mode badge
         self._mode_canvas = tk.Canvas(root_canvas, width=60, height=14,
                                       bg=t["bg"], highlightthickness=0)
         root_canvas.create_window(W // 2, HEADER_H // 2, anchor="center",
@@ -698,7 +699,8 @@ class PopupWindow:
         if self.show_transcripts:
             self.msg_text.pack_forget()
             self.trans_text.pack(fill="both", expand=True)
-            self.trans_btn.config(fg=self.t["accent"])
+            if self.trans_btn:
+                self.trans_btn.config(fg=self.t["accent"])
             # Charger les dernières transcriptions
             from core.database import query_transcripts
             recent = query_transcripts(limit=20)
@@ -711,7 +713,8 @@ class PopupWindow:
         else:
             self.trans_text.pack_forget()
             self.msg_text.pack(fill="both", expand=True)
-            self.trans_btn.config(fg=self.t["fg_sec"])
+            if self.trans_btn:
+                self.trans_btn.config(fg=self.t["fg_sec"])
 
     def _add_transcript_to_ui(self, text):
         if self.window and self.window.winfo_exists():
@@ -750,106 +753,3 @@ class PopupWindow:
 
     def _refresh_history(self): pass
     def _set_chat_response(self, text): pass
-
-    def update_theme(self, theme_name):
-        """Met à jour le thème en temps réel"""
-        if theme_name == self._current_theme_name:
-            return
-            
-        self._current_theme_name = theme_name
-        self.t = THEMES[theme_name]
-        
-        # Mettre à jour les couleurs des HoverButtons si la fenêtre existe
-        if self.window and self.window.winfo_exists() and hasattr(self, '_header_btns'):
-            for btn in self._header_btns:
-                btn.update_colors(self.t["fg_sec"], self.t["accent"], self.t["bg"])
-
-        if self.window and self.window.winfo_exists():
-            # Sauvegarde de l'état actuel
-            current_input = self.input_var.get()
-            is_visible = self.window.winfo_viewable()
-            
-            # On détruit et on recrée pour appliquer proprement les nouvelles couleurs
-            self.window.destroy()
-            self.window = None
-            
-            if is_visible:
-                self.show()
-                if hasattr(self, 'input_var'):
-                    self.input_var.set(current_input)
-
-
-# ─────────────────────────────────────────────────────────
-# Tray
-# ─────────────────────────────────────────────────────────
-
-def create_icon_image():
-    size = 64
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.ellipse([4, 4, 60, 60], fill="#111111")
-    draw.ellipse([20, 20, 44, 44], fill="#FFFFFF")
-    draw.ellipse([28, 28, 36, 36], fill="#111111")
-    return img
-
-
-class TrayApp:
-    def __init__(self, assistant):
-        self.assistant = assistant
-        self.popup = None
-        self._root = None
-        self._current_theme_name = get_windows_theme()
-
-    def run(self):
-        self._root = tk.Tk()
-        self._root.withdraw()
-        self._root.title("OmiAssistant")
-
-        self.popup = PopupWindow(self.assistant, self._root)
-        self.assistant.on_suggestion_callback = self._on_new_suggestion
-        self.assistant.on_transcript_callback = self._on_new_transcript
-        self.assistant.on_vocal_query_callback = self._on_vocal_query
-
-        # Lancer la surveillance du thème Windows
-        self._check_theme_loop()
-
-        icon_img = create_icon_image()
-        menu = pystray.Menu(
-            pystray.MenuItem("Ouvrir", self._open_popup, default=True),
-            pystray.MenuItem("Quitter", self._quit),
-        )
-        self.icon = pystray.Icon("OmiAssistant", icon_img, "Omi", menu=menu)
-
-        threading.Thread(target=self.icon.run, daemon=True).start()
-        self._root.mainloop()
-
-    def _check_theme_loop(self):
-        """Vérifie périodiquement si le thème Windows a changé"""
-        new_theme = get_windows_theme()
-        if new_theme != self._current_theme_name:
-            self._current_theme_name = new_theme
-            if self.popup:
-                self.popup.update_theme(new_theme)
-        
-        if self._root:
-            self._root.after(3000, self._check_theme_loop)
-
-    def _open_popup(self, icon=None, item=None):
-        self._root.after(0, self.popup.show)
-
-    def _on_new_suggestion(self, text):
-        if self.popup and self.popup.window and self.popup.window.winfo_exists():
-            self._root.after(0, lambda: self.popup._set_suggestion(text))
-
-    def _on_new_transcript(self, text):
-        if self.popup and self.popup.window and self.popup.window.winfo_exists():
-            self._root.after(0, lambda: self.popup._add_transcript_to_ui(text))
-
-    def _on_vocal_query(self, query):
-        if self.popup:
-            self._root.after(0, lambda: self.popup.trigger_vocal_chat(query))
-
-    def _quit(self, icon, item):
-        self.assistant.stop()
-        self.icon.stop()
-        self._root.after(0, self._root.destroy)

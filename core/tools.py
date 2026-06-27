@@ -37,6 +37,12 @@ from config import SCREEN_CAPTURE_SIZE, ALLOW_AUTONOMOUS_UI_INTERACTION
 from core.database import DB_PATH, query_transcripts, search_transcripts
 from core.profile import load_profile, save_profile
 
+# Background process and system bridge imports
+from core.process_manager import launch_detached, run_and_wait, launch_app, get_process_by_name, kill_by_name
+from core.system_bridge import media_control, set_volume, get_volume, send_notification as _send_notification
+from core.scheduler import schedule_task, list_scheduled_tasks, cancel_task
+from core.web_fetcher import search_web_headless, fetch_page_text
+
 def get_user_profile() -> dict:
     """Lit le profil complet de l'utilisateur — tout ce qu'OMI a appris sur lui jusqu'ici.
     Utilise cet outil pour personnaliser tes suggestions ou retrouver des informations connues."""
@@ -98,7 +104,11 @@ def get_ui_tree(window_title: str = None):
         if window_title:
             app = Desktop(backend="uia").window(title_re=f".*{window_title}.*")
         else:
-            app = Desktop(backend="uia").active_window()
+            import pygetwindow as gw
+            active = gw.getActiveWindow()
+            if not active:
+                return {"error": "Aucune fenêtre active détectée."}
+            app = Desktop(backend="uia").window(handle=active._hWnd)
         
         elements = []
         for child in app.descendants():
@@ -142,7 +152,11 @@ def click_element_by_name(element_name: str, window_title: str = None, action: s
         if window_title:
             app = Desktop(backend="uia").window(title_re=f".*{window_title}.*")
         else:
-            app = Desktop(backend="uia").active_window()
+            import pygetwindow as gw
+            active = gw.getActiveWindow()
+            if not active:
+                return {"error": "Aucune fenêtre active détectée."}
+            app = Desktop(backend="uia").window(handle=active._hWnd)
             
         try:
             element = app.child_window(title=element_name, control_type="Button")
@@ -180,39 +194,18 @@ def control_itunes(command: str):
     except Exception as e:
         return {"error": f"iTunes n'est probablement pas lancé ou erreur : {str(e)}"}
 
-def smart_media_control(action: str, app_hint: str = None):
-    """Controls media playback entirely in the background using native Windows media key events.
-    Works with any app that handles audio (Spotify, browser, VLC, Deezer, Apple Music, etc.).
-    - action: 'play', 'pause', 'play_pause', 'next', 'previous', 'stop'
-    - app_hint: optional, set to 'itunes' only if the user explicitly asks for iTunes
+def smart_media_control(action: str, app_hint: str = None) -> dict:
+    """
+    Contrôle la lecture multimédia EN ARRIÈRE-PLAN, sans toucher la souris.
+    Fonctionne avec n'importe quelle app audio (Spotify, VLC, navigateur…)
+    Cross-platform : Windows (VK_MEDIA) + Linux (playerctl/D-Bus)
+
+    action   : 'play', 'pause', 'play_pause', 'next', 'previous', 'stop'
+    app_hint : 'itunes' uniquement si l'utilisateur nomme explicitement iTunes
     """
     if app_hint and app_hint.lower() == 'itunes':
         return control_itunes(action)
-    
-    if platform.system() != "Windows":
-        return {"error": "Cet outil est uniquement supporté sur Windows."}
-    
-    try:
-        import ctypes
-        vk_map = {
-            'play': 0xB3,         # VK_MEDIA_PLAY_PAUSE
-            'pause': 0xB3,
-            'play_pause': 0xB3,
-            'next': 0xB0,         # VK_MEDIA_NEXT_TRACK
-            'previous': 0xB1,     # VK_MEDIA_PREV_TRACK
-            'stop': 0xB2          # VK_MEDIA_STOP
-        }
-        vk = vk_map.get(action.lower())
-        if not vk:
-            return {"error": f"Action non supportée: {action}."}
-        
-        # Press key
-        ctypes.windll.user32.keybd_event(vk, 0, 0, 0)
-        # Release key
-        ctypes.windll.user32.keybd_event(vk, 0, 2, 0)
-        return {"status": f"Commande média '{action}' envoyée globalement."}
-    except Exception as e:
-        return {"error": str(e)}
+    return media_control(action)
 
 def wait_for_ui(seconds: float):
     """Met en pause l'exécution pour laisser le temps à une application de s'ouvrir ou à l'interface de se mettre à jour.
@@ -324,19 +317,9 @@ def get_process_details(pid: int):
     except Exception as e:
         return {"error": str(e)}
 
-def send_notification(title: str, message: str):
-    """Affiche une notification système (Toast sur Windows ou libnotify sur Linux)."""
-    try:
-        if platform.system() == "Windows":
-            from win10toast_persist import ToastNotifier
-            toaster = ToastNotifier()
-            toaster.show_toast(title, message, duration=5, threaded=True)
-            return {"status": "Notification envoyée."}
-        else:
-            subprocess.run(["notify-send", title, message], check=True)
-            return {"status": "Notification envoyée."}
-    except Exception as e:
-        return {"error": str(e)}
+def send_notification(title: str, message: str, urgency: str = "normal") -> dict:
+    """Affiche une notification système (cross-platform)."""
+    return _send_notification(title, message, urgency)
 
 def inspect_image(file_path: str):
     """Permet à l'assistant de 'voir' une image sur le disque.
@@ -361,21 +344,20 @@ def inspect_image(file_path: str):
     except Exception as e:
         return {"error": str(e)}
 
-def execute_command(command: str):
-    """Exécute une commande système (Prudence !)."""
-    try:
-        creation_flags = 0
-        if platform.system() == "Windows":
-            creation_flags = 0x08000000
-            
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=10, creationflags=creation_flags)
-        return {
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "exit_code": result.returncode
-        }
-    except Exception as e:
-        return {"error": str(e)}
+def execute_command(command: str, background: bool = False, timeout: int = 15) -> dict:
+    """
+    Exécute une commande système.
+    background=True : lance en arrière-plan sans bloquer OMI (Popen détaché)
+    background=False : attend le résultat (max timeout secondes)
+
+    Exemples :
+      execute_command("spotify", background=True)    # Lance Spotify sans bloquer
+      execute_command("git status", timeout=5)       # Attend le résultat
+    """
+    if background:
+        return launch_detached(command)
+    else:
+        return run_and_wait(command, timeout=timeout)
 
 def get_active_window_info():
     """Récupère des infos sur les fenêtres ouvertes."""
@@ -631,38 +613,166 @@ def get_windows_event_logs(log_type: str = "System", count: int = 10):
     except Exception as e:
         return {"error": str(e)}
 
+def launch_app_background(app_name: str, args: list = None) -> dict:
+    """
+    Lance une application en arrière-plan par son nom commun.
+    Cross-platform. L'app survit si OMI s'arrête.
+
+    app_name : 'spotify', 'chrome', 'firefox', 'vscode', 'terminal', etc.
+    args     : arguments supplémentaires (ex: ["https://google.com"] pour Chrome)
+
+    [PRIORITÉ 1 pour lancer des apps — toujours avant execute_command]
+    """
+    return launch_app(app_name, args or [])
+
+
+def control_volume(level: int) -> dict:
+    """
+    Règle le volume système à un niveau de 0 à 100.
+    Cross-platform : Windows (Core Audio) + Linux (pactl/PipeWire)
+
+    Exemples :
+      control_volume(50)   # Moitié du volume
+      control_volume(0)    # Muet
+      control_volume(100)  # Maximum
+    """
+    return set_volume(level)
+
+
+def get_volume_level() -> dict:
+    """Récupère le volume système actuel (0-100) et l'état muet."""
+    return get_volume()
+
+
+def find_process(name: str) -> dict:
+    """
+    Cherche des processus en cours par nom (partiel, insensible à la casse).
+    Plus pratique que list_processes() pour trouver une app spécifique.
+
+    Exemple : find_process("spotify") → tous les processus Spotify
+    """
+    found = get_process_by_name(name)
+    if not found:
+        return {"status": f"Aucun processus '{name}' trouvé"}
+    return {"processes": found, "count": len(found)}
+
+
+def terminate_app(name: str, force: bool = False) -> dict:
+    """
+    Termine une application par son nom (plus simple que kill_process qui nécessite un PID).
+    force=True force la fermeture immédiate (SIGKILL).
+
+    Exemples :
+      terminate_app("spotify")
+      terminate_app("chrome", force=True)
+    """
+    return kill_by_name(name, force)
+
+
+def schedule_reminder(name: str, command: str,
+                      delay_minutes: int = None, run_at_time: str = None) -> dict:
+    """
+    Planifie une tâche ou un rappel pour plus tard, en arrière-plan.
+    Ne bloque pas. La tâche s'exécutera même si OMI est fermé (via OS scheduler).
+
+    name          : nom du rappel (ex: "Rappel réunion")
+    command       : commande à exécuter (ex: "notify-send 'Standup!'")
+    delay_minutes : dans combien de minutes (ex: 30)
+    run_at_time   : heure exacte "HH:MM" ou "YYYY-MM-DD HH:MM"
+
+    Exemples :
+      schedule_reminder("Pause", "notify-send 'Pause!'", delay_minutes=45)
+      schedule_reminder("Standup", "notify-send 'Standup!'", run_at_time="09:55")
+      schedule_reminder("Musique off", "playerctl stop", delay_minutes=60)
+    """
+    return schedule_task(name, command, delay_minutes, run_at_time)
+
+
+def list_reminders() -> dict:
+    """Liste les rappels/tâches planifiés par OMI."""
+    return list_scheduled_tasks()
+
+
+def cancel_reminder(task_id: int) -> dict:
+    """Annule un rappel planifié par son ID (obtenu via list_reminders)."""
+    return cancel_task(task_id)
+
+
+def web_search(query: str, max_results: int = 5) -> dict:
+    """
+    Recherche sur internet et retourne les résultats directement.
+    PAS de popup navigateur — les résultats sont donnés à Gemini.
+    Utilise DuckDuckGo Instant Answer (gratuit, pas de clé API).
+
+    Utilise cet outil pour répondre à des questions factuelles en temps réel :
+    météo, cours de bourse, actualités, définitions, calculs, etc.
+
+    [PRIORITÉ 1 pour toute recherche internet — avant open_url ou search_web]
+    """
+    return search_web_headless(query, max_results)
+
+
+def fetch_url_content(url: str, max_chars: int = 3000) -> dict:
+    """
+    Récupère et lit le contenu textuel d'une page web, sans ouvrir de navigateur.
+    Utile pour lire un article, une documentation, un prix, etc.
+
+    Note : ne fonctionne pas sur les sites nécessitant JavaScript (SPAs).
+    """
+    return fetch_page_text(url, max_chars)
+
+
 TOOLS_LIST = [
-    list_directory, 
-    read_file, 
-    write_file,
-    search_files, 
-    inspect_image, 
-    execute_command, 
-    get_active_window_info,
-    mouse_click,
-    type_text,
-    press_key,
-    query_transcript_history,
-    open_url,
-    search_web,
-    wait_for_ui,
+    # ── PRIORITÉ 1 : Arrière-plan total, zéro interruption ──────────────────
+    smart_media_control,      # Media play/pause/next (Windows + Linux)
+    control_volume,           # Volume système (Windows + Linux)
+    launch_app_background,    # Lancer une app détachée
+    execute_command,          # Commande shell (background=True pour détacher)
+    web_search,               # Recherche internet → résultats directs
+    fetch_url_content,        # Lire une page web
+    schedule_reminder,        # Planifier une tâche
+    list_reminders,           # Voir les tâches planifiées
+    cancel_reminder,          # Annuler une tâche
+
+    # ── PRIORITÉ 2 : Interaction UI sans souris (Windows) ────────────────────
     get_ui_tree,
     click_element_by_name,
     background_interact,
-    smart_media_control,
     control_itunes,
-    get_system_stats,
-    list_processes,
-    get_process_details,
-    kill_process,
+
+    # ── PRIORITÉ 3 : Lecture système ─────────────────────────────────────────
+    get_active_window_info,
+    list_directory,
+    read_file,
+    write_file,
+    search_files,
+    inspect_image,
     get_clipboard,
     set_clipboard,
+    get_system_stats,
+    list_processes,
+    find_process,            # Chercher par nom (plus simple que list_processes)
+    get_process_details,
+    kill_process,            # Par PID
+    terminate_app,           # Par nom d'app
     get_network_connections,
     get_machine_info,
     get_windows_event_logs,
+
+    # ── PRIORITÉ 4 : Communication ───────────────────────────────────────────
     send_notification,
+    open_url,                # Ouvre dans le navigateur (pour navigation manuelle)
+    query_transcript_history,
+    wait_for_ui,
+
+    # ── DERNIER RECOURS : Souris/clavier physiques ───────────────────────────
+    mouse_click,
+    type_text,
+    press_key,
+
+    # ── Profil ───────────────────────────────────────────────────────────────
     get_user_profile,
-    update_user_profile
+    update_user_profile,
 ]
 
 
