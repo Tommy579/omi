@@ -137,6 +137,14 @@ def draw_omi_logo(canvas, cx, cy, size=10, color="#FFFFFF"):
     canvas.create_oval(cx-r3, cy-r3, cx+r3, cy+r3, fill=color, outline="")
 
 
+def draw_mic_icon(canvas, cx, cy, size=8, color="#FFFFFF"):
+    """Dessine un micro simple."""
+    # Tige
+    canvas.create_rectangle(cx-1, cy-size, cx+1, cy+size/2, fill=color, outline="")
+    # Tête
+    canvas.create_oval(cx-size, cy-size-size, cx+size, cy-size+size, outline=color, width=2)
+
+
 class HoverButton(tk.Label):
     """Label cliquable avec effet hover via changement de couleur."""
     def __init__(self, parent, normal_fg, hover_fg, bg, **kwargs):
@@ -271,14 +279,36 @@ class PopupWindow:
         self.overlay = OverlayWindow(self.root)
         self.trans_btn = None # FIX: Initialisation explicite
 
-    def _make_toolbar_btn(self, parent_canvas: tk.Canvas, text: str,
+    def _make_toolbar_btn(self, parent_canvas: tk.Canvas, icon_func,
+                           x: int, y: int, anchor: str = "e",
+                           command=None) -> tk.Canvas:
+        """
+        Creates a consistent toolbar button using a drawing function.
+        """
+        btn_canvas = tk.Canvas(parent_canvas, width=20, height=20, bg=self.t["bg"],
+                               highlightthickness=0, cursor="hand2")
+        parent_canvas.create_window(x, y, anchor=anchor, window=btn_canvas)
+
+        def draw(color):
+            btn_canvas.delete("all")
+            icon_func(btn_canvas, 10, 10, size=6, color=color)
+
+        draw(self.t["fg_sec"])
+
+        btn_canvas.bind("<Enter>", lambda e: draw(self.t["fg"]))
+        btn_canvas.bind("<Leave>", lambda e: draw(self.t["fg_sec"]))
+
+        if command:
+            btn_canvas.bind("<Button-1>", lambda e: command())
+
+        return btn_canvas
+
+    def _make_text_btn(self, parent_canvas: tk.Canvas, text: str,
                            x: int, y: int, anchor: str = "e",
                            font_size: int = 10, bold: bool = False,
                            command=None) -> tk.Label:
         """
-        Creates a consistent toolbar button.
-        All toolbar buttons must go through this helper.
-        Returns the Label widget for later state updates (e.g. pause toggle).
+        Creates a consistent text-based toolbar button.
         """
         weight = "bold" if bold else "normal"
         btn = tk.Label(
@@ -424,23 +454,23 @@ class PopupWindow:
         BTN_Y = HEADER_H // 2
         
         # Close ×
-        self._make_toolbar_btn(root_canvas, "×", W - PAD_RIGHT, BTN_Y, anchor="e",
+        self._make_text_btn(root_canvas, "×", W - PAD_RIGHT, BTN_Y, anchor="e",
                                 font_size=15, command=self.close_completely)
         # Minimize —
-        self._make_toolbar_btn(root_canvas, "—", W - PAD_RIGHT - 24, BTN_Y, anchor="e",
+        self._make_text_btn(root_canvas, "—", W - PAD_RIGHT - 24, BTN_Y, anchor="e",
                                 font_size=11, command=self.minimize)
-        # Transcripts: "MIC" text (replaces broken 🎙️ emoji)
+        # Transcripts: Mic icon (replaces "MIC" text)
         self.trans_btn = self._make_toolbar_btn(
-            root_canvas, "MIC", W - PAD_RIGHT - 50, BTN_Y, anchor="e",
-            font_size=8, bold=True, command=self._toggle_transcripts
+            root_canvas, draw_mic_icon, W - PAD_RIGHT - 50, BTN_Y, anchor="e",
+            command=self._toggle_transcripts
         )
         # Pause/Resume: "||" (replaces broken ⏸ emoji)
-        self.pause_label = self._make_toolbar_btn(
+        self.pause_label = self._make_text_btn(
             root_canvas, "||", W - PAD_RIGHT - 76, BTN_Y, anchor="e",
             font_size=11, bold=True, command=self._toggle_pause
         )
         # Analyze ↺
-        self._make_toolbar_btn(
+        self._make_text_btn(
             root_canvas, "↺", W - PAD_RIGHT - 102, BTN_Y, anchor="e",
             font_size=13, bold=True, command=self._force_analyze
         )
@@ -718,7 +748,7 @@ class PopupWindow:
             self._append(label, item["content"], "sender_omi", "text_omi")
 
     def _set_suggestion(self, text):
-        if self.popup and self.popup.window and self.popup.window.winfo_exists():
+        if self.window and self.window.winfo_exists():
             label = "AUDIO" if text.startswith("🎤") else "ÉCRAN"
             clean = text.lstrip("🎤 ")
             self._append(label, clean, "sender_omi", "text_omi")
@@ -805,8 +835,13 @@ class PopupWindow:
         if self.show_transcripts:
             self.msg_text.pack_forget()
             self.trans_text.pack(fill="both", expand=True)
-            if self.trans_btn:
-                self.trans_btn.config(fg=self.t["accent"], font=(FONT, 8, "bold"))
+            # Highlight as active
+            # (Note: drawing functions don't easily change color without redraw)
+            # Re-draw the mic icon with active color
+            btn_canvas = self.trans_btn
+            btn_canvas.delete("all")
+            draw_mic_icon(btn_canvas, 10, 10, size=6, color=self.t["accent"])
+            
             # Charger les dernières transcriptions
             from core.database import query_transcripts
             recent = query_transcripts(limit=20)
@@ -819,8 +854,10 @@ class PopupWindow:
         else:
             self.trans_text.pack_forget()
             self.msg_text.pack(fill="both", expand=True)
-            if self.trans_btn:
-                self.trans_btn.config(fg=self.t["fg_sec"], font=(FONT, 8, "bold"))
+            # Re-draw the mic icon with inactive color
+            btn_canvas = self.trans_btn
+            btn_canvas.delete("all")
+            draw_mic_icon(btn_canvas, 10, 10, size=6, color=self.t["fg_sec"])
 
     def _add_transcript_to_ui(self, text):
         if self.window and self.window.winfo_exists():
