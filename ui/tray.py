@@ -225,8 +225,16 @@ class OverlayWindow:
             self._draw()
         else:
             self.window = tk.Toplevel(self.root)
-            self.window.overrideredirect(True)
-            self.window.attributes("-topmost", True)
+            try:
+                self.window.overrideredirect(True)
+                if winreg is None:
+                    self.window.attributes("-type", "utility")
+            except Exception:
+                pass
+            try:
+                self.window.attributes("-topmost", True)
+            except Exception:
+                pass
             if winreg is not None:
                 self.window.attributes("-transparentcolor", CHROMA)
                 self.window.config(bg=CHROMA)
@@ -405,16 +413,33 @@ class PopupWindow:
         win.title("OMI")
         win.geometry(f"{W}x{H}")
         win.resizable(False, False)
-        win.overrideredirect(True)
-        win.attributes("-topmost", True)
-        win.configure(bg=CHROMA)
-        win.attributes("-transparentcolor", CHROMA)
+        try:
+            win.overrideredirect(True)
+            if winreg is None:
+                win.attributes("-type", "utility")
+        except Exception:
+            pass
+
+        try:
+            win.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        if winreg is not None:
+            win.configure(bg=CHROMA)
+            try:
+                win.attributes("-transparentcolor", CHROMA)
+            except Exception:
+                pass
+        else:
+            win.configure(bg=t["bg"])
 
         sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
         win.geometry(f"{W}x{H}+{sw - W - 16}+{sh - H - 52}")
 
         # Canvas principal
-        root_canvas = tk.Canvas(win, width=W, height=H, bg=CHROMA,
+        canvas_bg = CHROMA if winreg is not None else t["bg"]
+        root_canvas = tk.Canvas(win, width=W, height=H, bg=canvas_bg,
                                 highlightthickness=0, bd=0)
         root_canvas.place(x=0, y=0)
         rounded_rect(root_canvas, 0, 0, W, H, R,

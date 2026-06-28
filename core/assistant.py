@@ -443,12 +443,59 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
 
     def _capture_screen(self):
         """Capture l'écran principal et retourne un objet PIL Image redimensionné."""
+        import subprocess
+        import tempfile
+
+        is_wayland = os.environ.get("XDG_SESSION_TYPE") == "wayland" or "WAYLAND_DISPLAY" in os.environ
+
+        if is_wayland:
+            temp_path = None
+            try:
+                fd, temp_path = tempfile.mkstemp(suffix=".png")
+                os.close(fd)
+
+                captured = False
+                # 1. KDE Spectacle
+                if subprocess.run(["which", "spectacle"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                    res = subprocess.run(["spectacle", "-b", "-n", "-o", temp_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    if res.returncode == 0 and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                        captured = True
+
+                # 2. GNOME Screenshot
+                if not captured and subprocess.run(["which", "gnome-screenshot"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                    res = subprocess.run(["gnome-screenshot", "-f", temp_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    if res.returncode == 0 and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                        captured = True
+
+                # 3. Grim (wlroots)
+                if not captured and subprocess.run(["which", "grim"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                    res = subprocess.run(["grim", temp_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    if res.returncode == 0 and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                        captured = True
+
+                if captured:
+                    img = Image.open(temp_path)
+                    img.load()  # Charge l'image en mémoire avant la suppression du fichier
+                    os.remove(temp_path)
+                    img.thumbnail(SCREEN_CAPTURE_SIZE, Image.LANCZOS)
+                    return img
+            except Exception as e:
+                print(f"[Vision] Erreur capture Wayland : {e}")
+            finally:
+                if temp_path and os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except Exception:
+                        pass
+
+        # Repli standard avec mss
         with mss.mss() as sct:
             monitor = sct.monitors[1]
             screenshot = sct.grab(monitor)
         img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
         img.thumbnail(SCREEN_CAPTURE_SIZE, Image.LANCZOS)
         return img
+
 
     def _capture_camera(self):
         """Capture une image depuis la webcam (instance persistante, pas de fuite mémoire)."""
