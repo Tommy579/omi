@@ -372,23 +372,13 @@ class PopupWindow:
         self.pause_label.bind("<Button-1>", self._toggle_pause)
         root_canvas.create_window(W - PAD_RIGHT - 56, btn_y, anchor="e", window=self.pause_label)
 
-        self.trans_btn = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="🎙️", font=("Segoe UI", 10), cursor="hand2")
+        self.trans_btn = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="Mic", font=("Segoe UI", 10), cursor="hand2")
         self.trans_btn.bind("<Button-1>", self._toggle_transcripts)
         root_canvas.create_window(W - PAD_RIGHT - 82, btn_y, anchor="e", window=self.trans_btn)
 
         btn_refresh = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="↺", font=("Segoe UI", 13), cursor="hand2")
         btn_refresh.bind("<Button-1>", self._force_analyze)
         root_canvas.create_window(W - PAD_RIGHT - 108, btn_y, anchor="e", window=btn_refresh)
-
-        # Mode badge
-        self._mode_canvas = tk.Canvas(root_canvas, width=60, height=14,
-                                      bg=t["bg"], highlightthickness=0)
-        root_canvas.create_window(W // 2, HEADER_H // 2, anchor="center",
-                                  window=self._mode_canvas)
-        self._mode_rect = rounded_rect(self._mode_canvas, 0, 0, 60, 14, 4,
-                                       fill=t["badge_bg"], outline="")
-        self._mode_label = self._mode_canvas.create_text(
-            30, 7, text="", font=("Segoe UI", 7), fill=t["badge_fg"])
 
         # ── Zone messages ─────────────────────────────────────
         PAD = 12
@@ -565,11 +555,7 @@ class PopupWindow:
 
     def set_mode_badge(self, mode: str):
         """Met à jour le badge de mode (DOCUMENT / TEXTE / IMAGE) dans le header."""
-        if not hasattr(self, '_mode_canvas') or not self.window:
-            return
-        labels = {"document": "DOC", "texte": "TXT", "image": "IMG"}
-        text = labels.get(mode, "")
-        self._mode_canvas.itemconfig(self._mode_label, text=text)
+        pass
 
 
     # ── Drag ──────────────────────────────────────────────
@@ -612,7 +598,7 @@ class PopupWindow:
             self._append(label, item["content"], "sender_omi", "text_omi")
 
     def _set_suggestion(self, text):
-        if self.window and self.window.winfo_exists():
+        if self.popup and self.popup.window and self.popup.window.winfo_exists():
             label = "AUDIO" if text.startswith("🎤") else "ÉCRAN"
             clean = text.lstrip("🎤 ")
             self._append(label, clean, "sender_omi", "text_omi")
@@ -829,4 +815,3 @@ class TrayApp:
         self.assistant.stop()
         self.icon.stop()
         self._root.after(0, self._root.destroy)
-

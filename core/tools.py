@@ -613,7 +613,7 @@ def get_windows_event_logs(log_type: str = "System", count: int = 10):
     except Exception as e:
         return {"error": str(e)}
 
-def launch_app_background(app_name: str, args: list = None) -> dict:
+def launch_app_background(app_name: str, args: list[str] = None) -> dict:
     """
     Lance une application en arrière-plan par son nom commun.
     Cross-platform. L'app survit si OMI s'arrête.

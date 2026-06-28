@@ -93,7 +93,7 @@ def run_and_wait(command: str | list, timeout: int = 15, cwd: str = None) -> dic
         return {"error": str(e)}
 
 
-def launch_app(app_name: str, args: list = None) -> dict:
+def launch_app(app_name: str, args: list[str] = None) -> dict:
     """
     Lance une application par son nom commun, cross-platform.
     Gère les deep links, les noms d'exécutables, et les apps packagées.
