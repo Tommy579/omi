@@ -138,11 +138,21 @@ def draw_omi_logo(canvas, cx, cy, size=10, color="#FFFFFF"):
 
 
 def draw_mic_icon(canvas, cx, cy, size=8, color="#FFFFFF"):
-    """Dessine un micro simple."""
-    # Tige
-    canvas.create_rectangle(cx-1, cy-size, cx+1, cy+size/2, fill=color, outline="")
-    # Tête
-    canvas.create_oval(cx-size, cy-size-size, cx+size, cy-size+size, outline=color, width=2)
+    """Dessine un micro simple (capsule + tige + pied en arc)."""
+    w = size * 0.55   # demi-largeur de la capsule
+    # Capsule (corps du micro) — rectangle arrondi
+    canvas.create_arc(cx - w, cy - size - w, cx + w, cy - size + w,
+                      start=0, extent=180, fill=color, outline="")
+    canvas.create_rectangle(cx - w, cy - size, cx + w, cy + size * 0.2,
+                            fill=color, outline="")
+    canvas.create_arc(cx - w, cy + size * 0.2 - w, cx + w, cy + size * 0.2 + w,
+                      start=180, extent=180, fill=color, outline="")
+    # Pied (arc sous la capsule)
+    canvas.create_arc(cx - size, cy - size * 0.2, cx + size, cy + size * 1.3,
+                      start=0, extent=-180, outline=color, width=1.5, style="arc")
+    # Tige verticale
+    canvas.create_line(cx, cy + size * 0.65, cx, cy + size, fill=color, width=1.5)
+
 
 
 class HoverButton(tk.Label):
@@ -459,19 +469,21 @@ class PopupWindow:
         # Minimize —
         self._make_text_btn(root_canvas, "—", W - PAD_RIGHT - 24, BTN_Y, anchor="e",
                                 font_size=11, command=self.minimize)
-        # Transcripts: Mic icon (replaces "MIC" text)
+        # ── 14px gap before tool buttons ──
+        TOOL_OFFSET = 62   # was 50 — adds ~12px gap
+        # Transcripts: Mic icon
         self.trans_btn = self._make_toolbar_btn(
-            root_canvas, draw_mic_icon, W - PAD_RIGHT - 50, BTN_Y, anchor="e",
+            root_canvas, draw_mic_icon, W - PAD_RIGHT - TOOL_OFFSET, BTN_Y, anchor="e",
             command=self._toggle_transcripts
         )
-        # Pause/Resume: "||" (replaces broken ⏸ emoji)
+        # Pause/Resume: "||" — barres légèrement plus courtes (font_size 9)
         self.pause_label = self._make_text_btn(
-            root_canvas, "||", W - PAD_RIGHT - 76, BTN_Y, anchor="e",
-            font_size=11, bold=True, command=self._toggle_pause
+            root_canvas, "||", W - PAD_RIGHT - TOOL_OFFSET - 26, BTN_Y, anchor="e",
+            font_size=9, bold=True, command=self._toggle_pause
         )
         # Analyze ↺
         self._make_text_btn(
-            root_canvas, "↺", W - PAD_RIGHT - 102, BTN_Y, anchor="e",
+            root_canvas, "↺", W - PAD_RIGHT - TOOL_OFFSET - 52, BTN_Y, anchor="e",
             font_size=13, bold=True, command=self._force_analyze
         )
 
@@ -644,14 +656,19 @@ class PopupWindow:
                 0, SEND_R, 0, 0,
             ]
             send_canvas.create_polygon(pts, smooth=True, fill=bg, outline="")
-            # Arrow ↑ centered on the button
-            send_canvas.create_text(
-                SEND_W // 2, SEND_H // 2,
-                text="↑",
-                font=(FONT, 12, "bold"),
-                fill=t["send_btn_fg"],
-                anchor="center",
-            )
+            # Arrow drawn as polygon (fat, crisp, always correct size)
+            cx, cy = SEND_W // 2, SEND_H // 2
+            aw, ah, stem_w, stem_h = 9, 8, 4, 7  # head half-width, head height, stem half-width, stem height
+            arrow_pts = [
+                cx,        cy - ah,           # tip top
+                cx + aw,   cy,                # right wing
+                cx + stem_w, cy,              # right shoulder
+                cx + stem_w, cy + stem_h,     # right stem bottom
+                cx - stem_w, cy + stem_h,     # left stem bottom
+                cx - stem_w, cy,              # left shoulder
+                cx - aw,   cy,                # left wing
+            ]
+            send_canvas.create_polygon(arrow_pts, fill=t["send_btn_fg"], outline="")
 
         _draw_send_btn()
 
@@ -665,8 +682,18 @@ class PopupWindow:
                    SEND_R,SEND_H, 0,SEND_H, 0,SEND_H-SEND_R, 0,SEND_R, 0,0]
             hover_bg = t.get("send_btn_hover", t["send_btn_bg"])
             send_canvas.create_polygon(pts, smooth=True, fill=hover_bg, outline="")
-            send_canvas.create_text(SEND_W//2, SEND_H//2, text="↑",
-                                     font=(FONT, 12, "bold"), fill=t["send_btn_fg"], anchor="center")
+            cx, cy = SEND_W // 2, SEND_H // 2
+            aw, ah, stem_w, stem_h = 9, 8, 4, 7
+            arrow_pts = [
+                cx,        cy - ah,
+                cx + aw,   cy,
+                cx + stem_w, cy,
+                cx + stem_w, cy + stem_h,
+                cx - stem_w, cy + stem_h,
+                cx - stem_w, cy,
+                cx - aw,   cy,
+            ]
+            send_canvas.create_polygon(arrow_pts, fill=t["send_btn_fg"], outline="")
 
         def _on_send_leave(e):
             _draw_send_btn()
