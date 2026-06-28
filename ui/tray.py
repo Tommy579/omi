@@ -30,6 +30,24 @@ def get_windows_theme():
     except Exception:
         return "dark"
 
+import tkinter.font as tkfont
+
+def _resolve_font() -> str:
+    try:
+        preferred = [
+            "Söhne", "Segoe UI Variable Display", "Segoe UI Variable",
+            "Inter", "Segoe UI", "Helvetica Neue", "Ubuntu",
+        ]
+        available = tkfont.families()
+        for f in preferred:
+            if f in available:
+                return f
+    except Exception:
+        pass
+    return "Segoe UI"
+
+FONT = "Segoe UI"
+
 THEMES = {
     "dark": {
         "bg":           "#0F0F0F",
@@ -55,6 +73,9 @@ THEMES = {
         "border_line":  "#2A2A2A",
         "scrollbar":    "#2A2A2A",
         "scrollbar_hover": "#3A3A3A",
+        "send_btn_bg":    "#1A3A5C",
+        "send_btn_fg":    "#7BB8F0",
+        "send_btn_hover": "#1E4A7A",
     },
     "light": {
         "bg":           "#F2F2F2",
@@ -80,6 +101,9 @@ THEMES = {
         "border_line":  "#E0E0E0",
         "scrollbar":    "#DDDDDD",
         "scrollbar_hover": "#CCCCCC",
+        "send_btn_bg":    "#1A5CCC",
+        "send_btn_fg":    "#FFFFFF",
+        "send_btn_hover": "#1A4FB0",
     },
 }
 
@@ -247,6 +271,42 @@ class PopupWindow:
         self.overlay = OverlayWindow(self.root)
         self.trans_btn = None # FIX: Initialisation explicite
 
+    def _make_toolbar_btn(self, parent_canvas: tk.Canvas, text: str,
+                           x: int, y: int, anchor: str = "e",
+                           font_size: int = 10, bold: bool = False,
+                           command=None) -> tk.Label:
+        """
+        Creates a consistent toolbar button.
+        All toolbar buttons must go through this helper.
+        Returns the Label widget for later state updates (e.g. pause toggle).
+        """
+        weight = "bold" if bold else "normal"
+        btn = tk.Label(
+            parent_canvas,
+            text=text,
+            font=(FONT, font_size, weight),
+            fg=self.t["fg_sec"],
+            bg=self.t["bg"],
+            cursor="hand2",
+            padx=2,
+        )
+        parent_canvas.create_window(x, y, anchor=anchor, window=btn)
+
+        # Hover effects
+        def on_enter(e):
+            btn.config(fg=self.t["fg"])
+        def on_leave(e):
+            btn.config(fg=self.t["fg_sec"])
+
+        btn.bind("<Enter>", on_enter)
+        btn.bind("<Leave>", on_leave)
+
+        if command:
+            btn.bind("<Button-1>", lambda e: command())
+
+        return btn
+
+
     def update_theme(self, theme_name):
         """Met à jour le thème en temps réel"""
         if theme_name == self._current_theme_name:
@@ -330,10 +390,14 @@ class PopupWindow:
         draw_omi_logo(root_canvas, 22, HEADER_H // 2, size=9,
                       color=t["accent"])
 
-        # Titre
-        root_canvas.create_text(38, HEADER_H // 2, text="OMI",
-                                font=("Segoe UI", 11, "bold"),
-                                fill=t["fg"], anchor="w")
+        # Titre (clickable = minimize)
+        lbl_title = tk.Label(
+            root_canvas, text="OMI",
+            font=(FONT, 11, "bold"),
+            fg=self.t["fg"], bg=self.t["bg"], cursor="hand2"
+        )
+        root_canvas.create_window(38, HEADER_H // 2, anchor="w", window=lbl_title)
+        lbl_title.bind("<Button-1>", self.minimize)
 
         # Badge persona (petit, discret)
         persona_labels = {
@@ -348,7 +412,7 @@ class PopupWindow:
         rounded_rect(badge_canvas, 0, 0, 34, 16, 4,
                      fill=t["badge_bg"], outline="")
         badge_canvas.create_text(17, 8, text=persona_text,
-                                 font=("Segoe UI", 7, "bold"),
+                                 font=(FONT, 7, "bold"),
                                  fill=t["badge_fg"])
 
         # Séparateur horizontal sous le header
@@ -357,28 +421,29 @@ class PopupWindow:
 
         # Boutons de contrôle (droite)
         PAD_RIGHT = 14
-        btn_y = HEADER_H // 2
+        BTN_Y = HEADER_H // 2
         
-        # Création explicite des boutons pour gestion par attributs
-        btn_close = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="×", font=("Segoe UI", 16), cursor="hand2")
-        btn_close.bind("<Button-1>", self.close_completely)
-        root_canvas.create_window(W - PAD_RIGHT, btn_y, anchor="e", window=btn_close)
-
-        btn_min = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="—", font=("Segoe UI", 11), cursor="hand2")
-        btn_min.bind("<Button-1>", self.minimize)
-        root_canvas.create_window(W - PAD_RIGHT - 28, btn_y, anchor="e", window=btn_min)
-
-        self.pause_label = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="⏸", font=("Segoe UI", 10), cursor="hand2")
-        self.pause_label.bind("<Button-1>", self._toggle_pause)
-        root_canvas.create_window(W - PAD_RIGHT - 56, btn_y, anchor="e", window=self.pause_label)
-
-        self.trans_btn = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="Mic", font=("Segoe UI", 10), cursor="hand2")
-        self.trans_btn.bind("<Button-1>", self._toggle_transcripts)
-        root_canvas.create_window(W - PAD_RIGHT - 82, btn_y, anchor="e", window=self.trans_btn)
-
-        btn_refresh = HoverButton(root_canvas, normal_fg=t["fg_sec"], hover_fg=t["accent"], bg=t["bg"], text="↺", font=("Segoe UI", 13), cursor="hand2")
-        btn_refresh.bind("<Button-1>", self._force_analyze)
-        root_canvas.create_window(W - PAD_RIGHT - 108, btn_y, anchor="e", window=btn_refresh)
+        # Close ×
+        self._make_toolbar_btn(root_canvas, "×", W - PAD_RIGHT, BTN_Y, anchor="e",
+                                font_size=15, command=self.close_completely)
+        # Minimize —
+        self._make_toolbar_btn(root_canvas, "—", W - PAD_RIGHT - 24, BTN_Y, anchor="e",
+                                font_size=11, command=self.minimize)
+        # Transcripts: "MIC" text (replaces broken 🎙️ emoji)
+        self.trans_btn = self._make_toolbar_btn(
+            root_canvas, "MIC", W - PAD_RIGHT - 50, BTN_Y, anchor="e",
+            font_size=8, bold=True, command=self._toggle_transcripts
+        )
+        # Pause/Resume: "||" (replaces broken ⏸ emoji)
+        self.pause_label = self._make_toolbar_btn(
+            root_canvas, "||", W - PAD_RIGHT - 76, BTN_Y, anchor="e",
+            font_size=11, bold=True, command=self._toggle_pause
+        )
+        # Analyze ↺
+        self._make_toolbar_btn(
+            root_canvas, "↺", W - PAD_RIGHT - 102, BTN_Y, anchor="e",
+            font_size=13, bold=True, command=self._force_analyze
+        )
 
         # ── Zone messages ─────────────────────────────────────
         PAD = 12
@@ -397,7 +462,7 @@ class PopupWindow:
         self.msg_text = tk.Text(
             msg_frame,
             wrap="word",
-            font=("Segoe UI", 10),
+            font=(FONT, 10),
             bg=t["bg"],
             fg=t["fg"],
             bd=0,
@@ -443,29 +508,29 @@ class PopupWindow:
         # Tags messages — style moderne
         self.msg_text.tag_config("ts",
             foreground=t["fg_ter"],
-            font=("Segoe UI", 7),
+            font=(FONT, 7),
             spacing1=8)
         self.msg_text.tag_config("sender_omi",
             foreground=t["fg_sec"],
-            font=("Segoe UI", 8, "bold"),
-            spacing1=10, spacing3=1)
+            font=(FONT, 8, "bold"),
+            spacing1=8)
         self.msg_text.tag_config("text_omi",
             foreground=t["fg_omi"],
-            font=("Segoe UI", 10),
+            font=(FONT, 10),
             lmargin1=0, lmargin2=0,
-            spacing3=2)
+            spacing3=4)
         self.msg_text.tag_config("sender_you",
             foreground=t["fg_sec"],
-            font=("Segoe UI", 8, "bold"),
-            spacing1=10, spacing3=1)
+            font=(FONT, 8, "bold"),
+            spacing1=8)
         self.msg_text.tag_config("text_you",
-            foreground=t["accent_dim"],
-            font=("Segoe UI", 10, "italic"),
+            foreground=t["fg"],
+            font=(FONT, 10),
             lmargin1=0, lmargin2=0,
-            spacing3=2)
+            spacing3=4)
         self.msg_text.tag_config("text_system",
             foreground=t["fg_ter"],
-            font=("Segoe UI", 8, "italic"),
+            font=(FONT, 8, "italic"),
             spacing1=4, spacing3=4)
 
         self._load_history()
@@ -485,13 +550,18 @@ class PopupWindow:
         self._placeholder_active = True
         entry = tk.Entry(input_canvas,
                          textvariable=self.input_var,
-                         font=("Segoe UI", 10),
+                         font=(FONT, 10),
                          bg=t["input_bg"], fg=t["fg_sec"],
                          insertbackground=t["fg"],
                          bd=0, highlightthickness=0)
-        input_canvas.create_window(12, INPUT_H // 2, anchor="w",
+        
+        SEND_W, SEND_H = 34, 26   # Size of the blue send button
+        SEND_R = 8                 # Corner radius
+        
+        input_canvas.create_window(10, INPUT_H // 2, anchor="w",
                                    window=entry,
-                                   width=INPUT_W - 50, height=22)
+                                   width=W - PAD*2 - SEND_W - 20,
+                                   height=24)
 
         # Gestion placeholder
         def _focus_in(e):
@@ -513,17 +583,67 @@ class PopupWindow:
         entry.bind("<Return>", self._send)
         self.input_var.set("Écris un message...")
 
-        # Bouton envoi
-        send_btn = HoverButton(input_canvas,
-                               normal_fg=t["fg_sec"],
-                               hover_fg=t["accent"],
-                               bg=t["input_bg"],
-                               text="↑",
-                               font=("Segoe UI", 14, "bold"),
-                               cursor="hand2")
-        input_canvas.create_window(INPUT_W - 18, INPUT_H // 2,
-                                   anchor="center", window=send_btn)
-        send_btn.bind("<Button-1>", self._send)
+        # Canvas inside input_canvas to hold the send button
+        send_canvas = tk.Canvas(
+            input_canvas,
+            width=SEND_W,
+            height=SEND_H,
+            bg=t["input_bg"],
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
+        input_canvas.create_window(
+            INPUT_W - 6, INPUT_H // 2,
+            anchor="e", window=send_canvas,
+            width=SEND_W, height=SEND_H
+        )
+
+        def _draw_send_btn(pressed: bool = False):
+            send_canvas.delete("all")
+            bg = t["send_btn_bg"]
+            if pressed:
+                bg = t.get("send_btn_bg_pressed", bg)
+            # Draw rounded rectangle (the blue box)
+            pts = [
+                SEND_R, 0,   SEND_W - SEND_R, 0,
+                SEND_W, 0,   SEND_W, SEND_R,
+                SEND_W, SEND_H - SEND_R, SEND_W, SEND_H,
+                SEND_W - SEND_R, SEND_H, SEND_R, SEND_H,
+                0, SEND_H, 0, SEND_H - SEND_R,
+                0, SEND_R, 0, 0,
+            ]
+            send_canvas.create_polygon(pts, smooth=True, fill=bg, outline="")
+            # Arrow ↑ centered on the button
+            send_canvas.create_text(
+                SEND_W // 2, SEND_H // 2,
+                text="↑",
+                font=(FONT, 12, "bold"),
+                fill=t["send_btn_fg"],
+                anchor="center",
+            )
+
+        _draw_send_btn()
+
+        # Hover and click effects
+        def _on_send_enter(e): 
+            send_canvas.config(cursor="hand2")
+            # Slightly brighter on hover — redraw with a lighter shade
+            send_canvas.delete("all")
+            pts = [SEND_R,0, SEND_W-SEND_R,0, SEND_W,0, SEND_W,SEND_R,
+                   SEND_W,SEND_H-SEND_R, SEND_W,SEND_H, SEND_W-SEND_R,SEND_H,
+                   SEND_R,SEND_H, 0,SEND_H, 0,SEND_H-SEND_R, 0,SEND_R, 0,0]
+            hover_bg = t.get("send_btn_hover", t["send_btn_bg"])
+            send_canvas.create_polygon(pts, smooth=True, fill=hover_bg, outline="")
+            send_canvas.create_text(SEND_W//2, SEND_H//2, text="↑",
+                                     font=(FONT, 12, "bold"), fill=t["send_btn_fg"], anchor="center")
+
+        def _on_send_leave(e):
+            _draw_send_btn()
+
+        send_canvas.bind("<Enter>", _on_send_enter)
+        send_canvas.bind("<Leave>", _on_send_leave)
+        send_canvas.bind("<Button-1>", self._send)
 
         # Référencer pour le thème
         self._input_canvas = input_canvas
@@ -686,7 +806,7 @@ class PopupWindow:
             self.msg_text.pack_forget()
             self.trans_text.pack(fill="both", expand=True)
             if self.trans_btn:
-                self.trans_btn.config(fg=self.t["accent"])
+                self.trans_btn.config(fg=self.t["accent"], font=(FONT, 8, "bold"))
             # Charger les dernières transcriptions
             from core.database import query_transcripts
             recent = query_transcripts(limit=20)
@@ -700,7 +820,7 @@ class PopupWindow:
             self.trans_text.pack_forget()
             self.msg_text.pack(fill="both", expand=True)
             if self.trans_btn:
-                self.trans_btn.config(fg=self.t["fg_sec"])
+                self.trans_btn.config(fg=self.t["fg_sec"], font=(FONT, 8, "bold"))
 
     def _add_transcript_to_ui(self, text):
         if self.window and self.window.winfo_exists():
@@ -716,7 +836,7 @@ class PopupWindow:
     def _toggle_pause(self, event=None):
         is_paused = self.assistant.toggle_pause()
         if hasattr(self, 'pause_label'):
-            self.pause_label.config(text="▶" if is_paused else "⏸")
+            self.pause_label.config(text="▶" if is_paused else "||")
         msg = "Analyse en pause." if is_paused else "Analyse reprend."
         t = self.msg_text
         t.config(state="normal")
@@ -766,6 +886,9 @@ class TrayApp:
         self._root = tk.Tk()
         self._root.withdraw()
         self._root.title("OmiAssistant")
+
+        global FONT
+        FONT = _resolve_font()
 
         self.popup = PopupWindow(self.assistant, self._root)
         self.assistant.on_suggestion_callback = self._on_new_suggestion
