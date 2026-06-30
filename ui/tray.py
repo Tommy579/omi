@@ -198,6 +198,30 @@ class LoadingDots:
         self._root.after(400, self._tick)
 
 
+
+
+# ─────────────────────────────────────────────────────────
+# Exclusion de capture d'écran
+# ─────────────────────────────────────────────────────────
+
+def exclude_window_from_capture(window):
+    """
+    Exclut la fenêtre des captures d'écran système (Windows uniquement).
+    Cela empêche OMI de s'analyser lui-même en rendant ses fenêtres
+    totalement invisibles pour les APIs de capture (SetWindowDisplayAffinity).
+    """
+    import platform
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            window.update_idletasks()
+            hwnd = window.winfo_id()
+            # WDA_EXCLUDEFROMCAPTURE = 0x00000011
+            ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
+        except Exception as e:
+            print(f"[ExcludeCapture] Erreur : {e}")
+
+
 # ─────────────────────────────────────────────────────────
 # Filigrane (Watermark)
 # ─────────────────────────────────────────────────────────
@@ -235,6 +259,7 @@ class OverlayWindow:
                 self.window.attributes("-topmost", True)
             except Exception:
                 pass
+            exclude_window_from_capture(self.window)
             if winreg is not None:
                 self.window.attributes("-transparentcolor", CHROMA)
                 self.window.config(bg=CHROMA)
@@ -390,6 +415,7 @@ class PopupWindow:
         self.t = THEMES[self._current_theme_name]
         
         self.window = tk.Toplevel(self.root)
+        exclude_window_from_capture(self.window)
         self._build_ui()
 
     def minimize(self, event=None):
