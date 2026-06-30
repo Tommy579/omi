@@ -38,6 +38,7 @@ from config import (
 from core.tools import TOOLS_LIST
 from core.database import add_transcript, query_transcripts
 from core.profile import get_profile_summary
+from core.local_router import try_local_route
 
 
 def sanitize_history(history):
@@ -180,16 +181,31 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
 - Ne demande pas confirmation pour les mises à jour mineures (stack, apps fréquentes).
 - Consulte le profil avec `get_user_profile()` si l'utilisateur te pose une question sur lui-même."""
         
-        self.chat_session = self.client.chats.create(
-            model=GEMINI_MODEL,
-            config={"system_instruction": enhanced_prompt, "tools": TOOLS_LIST}
-        )
-        # Session séparée pour l'analyse vision d'arrière-plan pour éviter les blocages de verrous
+        # Session VISION : observation passive, AUCUN outil d'action.
+        # Le rôle de cette session est uniquement de regarder l'écran/texte et de
+        # répondre par une suggestion textuelle courte. Elle ne doit jamais pouvoir
+        # déclencher une action (musique, scheduling, web, fichiers...).
+        vision_prompt = enhanced_prompt + """
+
+### RAPPEL CRITIQUE — MODE OBSERVATION SEULE
+Tu n'as accès à AUCUN outil dans ce contexte. Réponds uniquement par du texte.
+Si tu n'as rien de pertinent à signaler, réponds exactement : "Rien de particulier."
+"""
         self.vision_chat_session = self.client.chats.create(
             model=GEMINI_MODEL,
+            config={"system_instruction": vision_prompt}  # ← pas de "tools" ici
+        )
+
+        # Session AGENT : chat interactif déclenché par l'utilisateur.
+        # Cette session garde l'accès à tous les outils (process, scheduler, web, media...).
+        self.agent_session = self.client.chats.create(
+            model=GEMINI_MODEL,
             config={"system_instruction": enhanced_prompt, "tools": TOOLS_LIST}
         )
-        self._enhanced_prompt = enhanced_prompt  # Gardé pour le trim de session
+        self.chat_session = self.agent_session  # alias de compatibilité
+
+        self._enhanced_prompt = enhanced_prompt
+        self._vision_prompt = vision_prompt
         self._last_screen_arr = None
         self._unchanged_count = 0
         self._doc_cache: dict = {"title": None, "path": None, "content": None}
@@ -621,58 +637,67 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
         self._add_to_memory("vision", suggestion)
         self._update_suggestion(suggestion)
 
-    def _trim_chat_history_if_needed(self, session):
+    def _trim_chat_history_if_needed(self, session, is_vision=False):
         try:
             history = session.get_history()
             
             clean_history = sanitize_history(history)
             history_modified = len(clean_history) != len(history)
             
-            if history_modified or len(clean_history) > MAX_CHAT_TURNS * 2:
+            max_turns = 10 if is_vision else MAX_CHAT_TURNS
+            
+            if history_modified or len(clean_history) > max_turns * 2:
                 recent = clean_history
-                if len(recent) > MAX_CHAT_TURNS * 2:
-                    recent = recent[-(MAX_CHAT_TURNS * 2):]
-                    # Avancer jusqu'à un tour "user" propre (pas une function_response)
-                    start = 0
-                    for i, turn in enumerate(recent):
-                        if turn.role == "user":
-                            parts = turn.parts if hasattr(turn, "parts") else []
-                            is_func_response = any(
-                                hasattr(p, "function_response") and p.function_response
-                                for p in parts
-                            )
-                            if not is_func_response:
-                                start = i
-                                break
-                    if start == 0:
-                        recent = recent[-6:]
-                    else:
-                        recent = recent[start:]
+                if len(recent) > max_turns * 2:
+                    recent = recent[-(max_turns * 2):]
+                    if not is_vision:
+                        # Avancer jusqu'à un tour "user" propre (pas une function_response)
+                        start = 0
+                        for i, turn in enumerate(recent):
+                            if turn.role == "user":
+                                parts = turn.parts if hasattr(turn, "parts") else []
+                                is_func_response = any(
+                                    hasattr(p, "function_response") and p.function_response
+                                    for p in parts
+                                )
+                                if not is_func_response:
+                                    start = i
+                                    break
+                        if start == 0:
+                            recent = recent[-6:]
+                        else:
+                            recent = recent[start:]
                 
                 recent = sanitize_history(recent)
                 
                 profile_summary = get_profile_summary()
-                prompt_with_profile = self._enhanced_prompt
+                base_prompt = self._vision_prompt if is_vision else self._enhanced_prompt
+                prompt_with_profile = base_prompt
                 if profile_summary:
-                    prompt_with_profile = self._enhanced_prompt + f"\n\n{profile_summary}"
+                    prompt_with_profile = base_prompt + f"\n\n{profile_summary}"
+
+                config = {"system_instruction": prompt_with_profile}
+                if not is_vision:
+                    config["tools"] = TOOLS_LIST
 
                 return self.client.chats.create(
                     model=GEMINI_MODEL,
-                    config={"system_instruction": prompt_with_profile, "tools": TOOLS_LIST},
+                    config=config,
                     history=recent
                 )
             return None
         except Exception as e:
-            print(f"[Chat] Erreur trim historique : {e}")
+            print(f"[{'Vision' if is_vision else 'Chat'}] Erreur trim historique : {e}")
             return None
 
     def _trim_session_if_needed(self, session_type="chat"):
         if session_type == "chat":
-            trimmed = self._trim_chat_history_if_needed(self.chat_session)
+            trimmed = self._trim_chat_history_if_needed(self.chat_session, is_vision=False)
             if trimmed:
                 self.chat_session = trimmed
+                self.agent_session = trimmed
         else:
-            trimmed = self._trim_chat_history_if_needed(self.vision_chat_session)
+            trimmed = self._trim_chat_history_if_needed(self.vision_chat_session, is_vision=True)
             if trimmed:
                 self.vision_chat_session = trimmed
 
@@ -949,6 +974,15 @@ Ce profil survit aux redémarrages — c'est ta mémoire long terme.
     # ─────────────────────────────────────────────
 
     def chat(self, user_message: str, is_system: bool = False, status_callback=None) -> str:
+        # Interception locale AVANT tout appel API : commandes triviales (musique, volume)
+        # Coût : 0 token. Si pas de match, on continue normalement vers Gemini.
+        if not is_system:
+            local_result = try_local_route(user_message)
+            if local_result is not None:
+                status_text = local_result.get("status") or local_result.get("error", "Fait.")
+                self._add_to_memory("local", status_text)
+                return status_text
+
         try:
             self._trim_session_if_needed(session_type="chat")
             

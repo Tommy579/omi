@@ -42,6 +42,7 @@ from core.process_manager import launch_detached, run_and_wait, launch_app, get_
 from core.system_bridge import media_control, set_volume, get_volume, send_notification as _send_notification
 from core.scheduler import schedule_task, list_scheduled_tasks, cancel_task
 from core.web_fetcher import search_web_headless, fetch_page_text
+from core.tool_cooldown import check_cooldown
 
 def get_user_profile() -> dict:
     """Lit le profil complet de l'utilisateur — tout ce qu'OMI a appris sur lui jusqu'ici.
@@ -685,6 +686,9 @@ def schedule_reminder(name: str, command: str,
       schedule_reminder("Standup", "notify-send 'Standup!'", run_at_time="09:55")
       schedule_reminder("Musique off", "playerctl stop", delay_minutes=60)
     """
+    allowed, wait_time = check_cooldown("schedule_reminder")
+    if not allowed:
+        return {"error": f"Trop de planifications récentes, réessaie dans {wait_time}s"}
     return schedule_task(name, command, delay_minutes, run_at_time)
 
 
@@ -709,6 +713,9 @@ def web_search(query: str, max_results: int = 5) -> dict:
 
     [PRIORITÉ 1 pour toute recherche internet — avant open_url ou search_web]
     """
+    allowed, wait_time = check_cooldown("web_search")
+    if not allowed:
+        return {"error": f"Trop de recherches récentes, réessaie dans {wait_time}s"}
     return search_web_headless(query, max_results)
 
 
@@ -719,6 +726,9 @@ def fetch_url_content(url: str, max_chars: int = 3000) -> dict:
 
     Note : ne fonctionne pas sur les sites nécessitant JavaScript (SPAs).
     """
+    allowed, wait_time = check_cooldown("fetch_url_content")
+    if not allowed:
+        return {"error": f"Trop de requêtes récentes, réessaie dans {wait_time}s"}
     return fetch_page_text(url, max_chars)
 
 

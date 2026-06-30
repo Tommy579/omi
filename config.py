@@ -105,7 +105,7 @@ SCREEN_CHANGE_THRESHOLD = 0.03
 MAX_UNCHANGED_FRAMES = 3
 
 # Nombre max de tours de chat avant de tailler l'historique de la session
-MAX_CHAT_TURNS = 20
+MAX_CHAT_TURNS = 10
 
 # Intervalle d'analyse écran (augmente de 5 à 10 pour réduire les tokens)
 SCREEN_CAPTURE_INTERVAL = 10
