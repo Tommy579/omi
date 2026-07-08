@@ -9,11 +9,14 @@ import threading
 import tkinter as tk
 from tkinter import scrolledtext
 import pystray
+import os
 from PIL import Image, ImageDraw
 try:
     import winreg
 except ImportError:
     winreg = None
+
+UI_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ─────────────────────────────────────────────────────────
 # Thème
@@ -341,10 +344,69 @@ class PopupWindow:
         btn_canvas.bind("<Enter>", lambda e: draw(self.t["fg"]))
         btn_canvas.bind("<Leave>", lambda e: draw(self.t["fg_sec"]))
 
+        return btn_canvas
+
+    def _make_image_btn(self, parent_canvas: tk.Canvas, img_path: str,
+                        x: int, y: int, anchor: str = "e",
+                        command=None) -> tk.Canvas:
+        """
+        Creates a consistent toolbar button using a PNG image.
+        Dynamic coloring is applied to match the active theme and hover state.
+        """
+        btn_canvas = tk.Canvas(parent_canvas, width=24, height=24, bg=self.t["bg"],
+                               highlightthickness=0, cursor="hand2")
+        parent_canvas.create_window(x, y, anchor=anchor, window=btn_canvas)
+        btn_canvas.photos = {}
+        btn_canvas.img_path = img_path
+        btn_canvas.is_active = False
+
+        def draw(color_hex):
+            btn_canvas.delete("all")
+            if color_hex not in btn_canvas.photos:
+                try:
+                    img = Image.open(btn_canvas.img_path).convert("RGBA")
+                    img = img.resize((18, 18), Image.Resampling.LANCZOS)
+                    r, g, b, alpha = img.split()
+                    h = color_hex.lstrip('#')
+                    rgb = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+                    color_img = Image.new("RGBA", img.size, rgb + (255,))
+                    color_img.putalpha(alpha)
+                    from PIL import ImageTk
+                    btn_canvas.photos[color_hex] = ImageTk.PhotoImage(color_img)
+                except Exception as e:
+                    print(f"[ImageBtn] Error loading/coloring {btn_canvas.img_path}: {e}")
+                    return
+            btn_canvas.create_image(12, 12, image=btn_canvas.photos[color_hex], anchor="center")
+
+        draw(self.t["fg_sec"])
+
+        def on_enter(e):
+            if not btn_canvas.is_active:
+                draw(self.t["fg"])
+            else:
+                draw(self.t["accent"])
+
+        def on_leave(e):
+            if not btn_canvas.is_active:
+                draw(self.t["fg_sec"])
+            else:
+                draw(self.t["accent"])
+
+        btn_canvas.bind("<Enter>", on_enter)
+        btn_canvas.bind("<Leave>", on_leave)
+        btn_canvas.draw_func = draw
+
         if command:
             btn_canvas.bind("<Button-1>", lambda e: command())
 
         return btn_canvas
+
+    def _update_image_btn(self, btn_canvas, img_path):
+        """Met à jour l'image d'un bouton existant en vidant le cache et redessinant."""
+        btn_canvas.img_path = img_path
+        btn_canvas.photos = {}
+        color = self.t["accent"] if btn_canvas.is_active else self.t["fg_sec"]
+        btn_canvas.draw_func(color)
 
     def _make_text_btn(self, parent_canvas: tk.Canvas, text: str,
                            x: int, y: int, anchor: str = "e",
@@ -506,9 +568,6 @@ class PopupWindow:
                                  font=(FONT, 7, "bold"),
                                  fill=t["badge_fg"])
 
-        # Séparateur horizontal sous le header
-        root_canvas.create_line(0, HEADER_H, W, HEADER_H,
-                                fill=t["border_line"], width=1)
 
         # Boutons de contrôle (droite)
         PAD_RIGHT = 14
@@ -518,24 +577,25 @@ class PopupWindow:
         self._make_text_btn(root_canvas, "×", W - PAD_RIGHT, BTN_Y, anchor="e",
                                 font_size=15, command=self.close_completely)
         # Minimize —
-        self._make_text_btn(root_canvas, "—", W - PAD_RIGHT - 24, BTN_Y, anchor="e",
+        self._make_text_btn(root_canvas, "–", W - PAD_RIGHT - 30, BTN_Y, anchor="e",
                                 font_size=11, command=self.minimize)
         # ── 14px gap before tool buttons ──
-        TOOL_OFFSET = 62   # was 50 — adds ~12px gap
+        TOOL_OFFSET = 72   # was 50 — adds ~12px gap
         # Transcripts: Mic icon
-        self.trans_btn = self._make_toolbar_btn(
-            root_canvas, draw_mic_icon, W - PAD_RIGHT - TOOL_OFFSET, BTN_Y, anchor="e",
+        self.trans_btn = self._make_image_btn(
+            root_canvas, os.path.join(UI_DIR, "micro.png"), W - PAD_RIGHT - TOOL_OFFSET, BTN_Y, anchor="e",
             command=self._toggle_transcripts
         )
-        # Pause/Resume: "||" — barres légèrement plus courtes (font_size 9)
-        self.pause_label = self._make_text_btn(
-            root_canvas, "||", W - PAD_RIGHT - TOOL_OFFSET - 26, BTN_Y, anchor="e",
-            font_size=9, bold=True, command=self._toggle_pause
+        # Pause/Resume: Pause/Play icon
+        pause_icon = "play.png" if self.assistant.paused else "pause.png"
+        self.pause_label = self._make_image_btn(
+            root_canvas, os.path.join(UI_DIR, pause_icon), W - PAD_RIGHT - TOOL_OFFSET - 30, BTN_Y, anchor="e",
+            command=self._toggle_pause
         )
-        # Analyze ↺
-        self._make_text_btn(
-            root_canvas, "↺", W - PAD_RIGHT - TOOL_OFFSET - 52, BTN_Y, anchor="e",
-            font_size=13, bold=True, command=self._force_analyze
+        # Analyze: Refresh icon
+        self._make_image_btn(
+            root_canvas, os.path.join(UI_DIR, "refresh.png"), W - PAD_RIGHT - TOOL_OFFSET - 60, BTN_Y, anchor="e",
+            command=self._force_analyze
         )
 
         # ── Zone messages ─────────────────────────────────────
@@ -694,10 +754,25 @@ class PopupWindow:
 
         def _draw_send_btn(pressed: bool = False):
             send_canvas.delete("all")
+            # --- MODIFICATION ---
+            # Remplacement de l'icône dessinée par send.png
+            if not hasattr(send_canvas, 'photo'):
+                try:
+                    img = Image.open(os.path.join(UI_DIR, "send.png")).convert("RGBA")
+                    img = img.resize((16, 16), Image.Resampling.LANCZOS)
+                    r, g, b, alpha = img.split()
+                    # Couleur accentuée (fg_omi)
+                    h = t["send_btn_fg"].lstrip('#')
+                    rgb = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+                    color_img = Image.new("RGBA", img.size, rgb + (255,))
+                    color_img.putalpha(alpha)
+                    from PIL import ImageTk
+                    send_canvas.photo = ImageTk.PhotoImage(color_img)
+                except Exception as e:
+                    print(f"Error loading send icon: {e}")
+            
             bg = t["send_btn_bg"]
-            if pressed:
-                bg = t.get("send_btn_bg_pressed", bg)
-            # Draw rounded rectangle (the blue box)
+            # Draw rounded rectangle
             pts = [
                 SEND_R, 0,   SEND_W - SEND_R, 0,
                 SEND_W, 0,   SEND_W, SEND_R,
@@ -707,44 +782,23 @@ class PopupWindow:
                 0, SEND_R, 0, 0,
             ]
             send_canvas.create_polygon(pts, smooth=True, fill=bg, outline="")
-            # Arrow drawn as polygon (fat, crisp, always correct size)
-            cx, cy = SEND_W // 2, SEND_H // 2
-            aw, ah, stem_w, stem_h = 9, 8, 4, 7  # head half-width, head height, stem half-width, stem height
-            arrow_pts = [
-                cx,        cy - ah,           # tip top
-                cx + aw,   cy,                # right wing
-                cx + stem_w, cy,              # right shoulder
-                cx + stem_w, cy + stem_h,     # right stem bottom
-                cx - stem_w, cy + stem_h,     # left stem bottom
-                cx - stem_w, cy,              # left shoulder
-                cx - aw,   cy,                # left wing
-            ]
-            send_canvas.create_polygon(arrow_pts, fill=t["send_btn_fg"], outline="")
+            if hasattr(send_canvas, 'photo'):
+                send_canvas.create_image(SEND_W // 2, SEND_H // 2, image=send_canvas.photo, anchor="center")
 
         _draw_send_btn()
 
         # Hover and click effects
         def _on_send_enter(e): 
             send_canvas.config(cursor="hand2")
-            # Slightly brighter on hover — redraw with a lighter shade
+            # Slightly brighter on hover — redraw
             send_canvas.delete("all")
             pts = [SEND_R,0, SEND_W-SEND_R,0, SEND_W,0, SEND_W,SEND_R,
                    SEND_W,SEND_H-SEND_R, SEND_W,SEND_H, SEND_W-SEND_R,SEND_H,
                    SEND_R,SEND_H, 0,SEND_H, 0,SEND_H-SEND_R, 0,SEND_R, 0,0]
             hover_bg = t.get("send_btn_hover", t["send_btn_bg"])
             send_canvas.create_polygon(pts, smooth=True, fill=hover_bg, outline="")
-            cx, cy = SEND_W // 2, SEND_H // 2
-            aw, ah, stem_w, stem_h = 9, 8, 4, 7
-            arrow_pts = [
-                cx,        cy - ah,
-                cx + aw,   cy,
-                cx + stem_w, cy,
-                cx + stem_w, cy + stem_h,
-                cx - stem_w, cy + stem_h,
-                cx - stem_w, cy,
-                cx - aw,   cy,
-            ]
-            send_canvas.create_polygon(arrow_pts, fill=t["send_btn_fg"], outline="")
+            if hasattr(send_canvas, 'photo'):
+                send_canvas.create_image(SEND_W // 2, SEND_H // 2, image=send_canvas.photo, anchor="center")
 
         def _on_send_leave(e):
             _draw_send_btn()
@@ -914,11 +968,9 @@ class PopupWindow:
             self.msg_text.pack_forget()
             self.trans_text.pack(fill="both", expand=True)
             # Highlight as active
-            # (Note: drawing functions don't easily change color without redraw)
-            # Re-draw the mic icon with active color
-            btn_canvas = self.trans_btn
-            btn_canvas.delete("all")
-            draw_mic_icon(btn_canvas, 10, 10, size=6, color=self.t["accent"])
+            if self.trans_btn:
+                self.trans_btn.is_active = True
+                self.trans_btn.draw_func(self.t["accent"])
             
             # Charger les dernières transcriptions
             from core.database import query_transcripts
@@ -933,9 +985,9 @@ class PopupWindow:
             self.trans_text.pack_forget()
             self.msg_text.pack(fill="both", expand=True)
             # Re-draw the mic icon with inactive color
-            btn_canvas = self.trans_btn
-            btn_canvas.delete("all")
-            draw_mic_icon(btn_canvas, 10, 10, size=6, color=self.t["fg_sec"])
+            if self.trans_btn:
+                self.trans_btn.is_active = False
+                self.trans_btn.draw_func(self.t["fg_sec"])
 
     def _add_transcript_to_ui(self, text):
         if self.window and self.window.winfo_exists():
@@ -950,8 +1002,9 @@ class PopupWindow:
 
     def _toggle_pause(self, event=None):
         is_paused = self.assistant.toggle_pause()
-        if hasattr(self, 'pause_label'):
-            self.pause_label.config(text="▶" if is_paused else "||")
+        if hasattr(self, 'pause_label') and self.pause_label:
+            icon_name = "play.png" if is_paused else "pause.png"
+            self._update_image_btn(self.pause_label, os.path.join(UI_DIR, icon_name))
         msg = "Analyse en pause." if is_paused else "Analyse reprend."
         t = self.msg_text
         t.config(state="normal")
