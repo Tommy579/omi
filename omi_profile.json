@@ -1,7 +1,7 @@
 {
   "_meta": {
     "created_at": "2026-05-24 12:51:17",
-    "last_updated": "2026-05-24 12:51:17",
+    "last_updated": "2026-06-27 20:03:23",
     "version": "1.0"
   },
   "identity": {
@@ -12,7 +12,13 @@
   "work": {
     "current_projects": [],
     "tech_stack": [],
-    "frequent_apps": [],
+    "frequent_apps": [
+      "python.exe",
+      "pythonw.exe",
+      "claude.exe",
+      "WindowsTerminal.exe",
+      "Antigravity.exe"
+    ],
     "frequent_files": [],
     "work_style": null
   },
@@ -32,5 +38,436 @@
     "typical_end_time": null,
     "most_productive_hours": []
   },
-  "notes": []
+  "notes": [
+    {
+      "date": "2026-06-27 11:57",
+      "text": "Résumé d'activité quotidienne :\n- python.exe : environ 2 min\n- explorer.exe : environ 1 min\n- WindowsTerminal.exe : actif (2 captures)\n- LockApp.exe : actif (1 captures)"
+    },
+    {
+      "date": "2026-06-27 11:57",
+      "text": "Résumé d'activité quotidienne :\n- python.exe : environ 2 min\n- explorer.exe : environ 1 min\n- WindowsTerminal.exe : actif (2 captures)\n- LockApp.exe : actif (1 captures)"
+    },
+    {
+      "date": "2026-06-27 12:50",
+      "text": "Résumé d'activité quotidienne :\n- chrome.exe : environ 5 min\n- pythonw.exe : environ 3 min\n- python.exe : environ 2 min\n- LockApp.exe : environ 1 min\n- Antigravity.exe : environ 1 min"
+    },
+    {
+      "date": "2026-06-27 13:53",
+      "text": "Résumé d'activité quotidienne :\n- chrome.exe : environ 5 min\n- pythonw.exe : environ 3 min\n- Antigravity.exe : environ 2 min\n- LockApp.exe : environ 1 min\n- python.exe : environ 1 min"
+    },
+    {
+      "date": "2026-06-27 13:54",
+      "text": "Résumé d'activité quotidienne :\n- chrome.exe : environ 5 min\n- pythonw.exe : environ 3 min\n- Antigravity.exe : environ 2 min\n- LockApp.exe : environ 1 min\n- python.exe : environ 1 min"
+    },
+    {
+      "date": "2026-06-27 13:58",
+      "text": "Résumé d'activité quotidienne :\n- chrome.exe : environ 5 min\n- pythonw.exe : environ 3 min\n- Antigravity.exe : environ 1 min\n- LockApp.exe : environ 1 min\n- Antigravity IDE.exe : environ 1 min"
+    },
+    {
+      "date": "2026-06-27 14:37",
+      "text": "Résumé d'activité quotidienne :\n- python.exe : environ 4 min\n- pythonw.exe : environ 3 min\n- claude.exe : environ 2 min\n- Antigravity.exe : environ 2 min\n- WindowsTerminal.exe : environ 1 min"
+    }
+  ],
+  "activity_log": [
+    {
+      "timestamp": "2026-06-27 12:45:16",
+      "app": "Antigravity.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:45:29",
+      "app": "Antigravity.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:45:43",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:45:54",
+      "app": "Antigravity.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:46:08",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:46:19",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:46:30",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:46:41",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:46:52",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:47:03",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:47:14",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:47:25",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:47:36",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:47:47",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:47:58",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:48:09",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:48:20",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:48:31",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:48:42",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:48:53",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:49:04",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 12:50:30",
+      "app": "pythonw.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:06:03",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:06:37",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:06:49",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:07:03",
+      "app": "Antigravity.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:07:28",
+      "app": "WindowsTerminal.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:34:02",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:34:22",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:34:47",
+      "app": "explorer.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:35:20",
+      "app": "Antigravity.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:35:55",
+      "app": "Antigravity.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:36:10",
+      "app": "Antigravity.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:36:24",
+      "app": "Antigravity.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:52:41",
+      "app": "explorer.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:53:15",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:54:57",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:55:17",
+      "app": "Antigravity.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:55:45",
+      "app": "WindowsTerminal.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:56:16",
+      "app": "WindowsTerminal.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:56:45",
+      "app": "explorer.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:57:10",
+      "app": "WindowsTerminal.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:57:53",
+      "app": "WindowsTerminal.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:58:20",
+      "app": "WindowsTerminal.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:58:45",
+      "app": "WindowsTerminal.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:59:17",
+      "app": "WindowsTerminal.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:59:40",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:59:49",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 13:59:50",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:00:16",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:00:28",
+      "app": "chrome.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:00:41",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:00:57",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:01:10",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:01:22",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:01:35",
+      "app": "WindowsTerminal.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:01:47",
+      "app": "chrome.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:02:00",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:02:13",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:02:53",
+      "app": "WindowsTerminal.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:03:05",
+      "app": "chrome.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:03:18",
+      "app": "chrome.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:03:31",
+      "app": "chrome.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:03:43",
+      "app": "chrome.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:03:56",
+      "app": "chrome.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:04:09",
+      "app": "chrome.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:04:23",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:04:35",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:04:50",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:05:02",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:05:15",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:05:27",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:05:40",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:06:06",
+      "app": "chrome.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:31:30",
+      "app": "WindowsTerminal.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:31:41",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:32:14",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:32:28",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:32:42",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:32:55",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:33:09",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:33:30",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:33:48",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:34:06",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:34:19",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:34:32",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:34:46",
+      "app": "explorer.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:34:56",
+      "app": "Antigravity.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:35:10",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:35:43",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:35:56",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:36:08",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:36:21",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:36:34",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:36:47",
+      "app": "explorer.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:36:58",
+      "app": "claude.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:37:11",
+      "app": "explorer.exe"
+    },
+    {
+      "timestamp": "2026-06-27 14:37:42",
+      "app": "explorer.exe"
+    },
+    {
+      "timestamp": "2026-06-27 20:03:13",
+      "app": "python.exe"
+    },
+    {
+      "timestamp": "2026-06-27 20:03:23",
+      "app": "WindowsTerminal.exe"
+    }
+  ]
 }

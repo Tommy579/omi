@@ -9,15 +9,20 @@ import threading
 import tkinter as tk
 from tkinter import scrolledtext
 import pystray
+import os
 from PIL import Image, ImageDraw
 try:
     import winreg
 except ImportError:
     winreg = None
 
+UI_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ─────────────────────────────────────────────────────────
 # Thème
 # ─────────────────────────────────────────────────────────
+
+import config
 
 def get_windows_theme():
     if not winreg:
@@ -29,6 +34,32 @@ def get_windows_theme():
         return "light" if value == 1 else "dark"
     except Exception:
         return "dark"
+
+def get_current_theme():
+    if config.THEME == "light":
+        return "light"
+    elif config.THEME == "dark":
+        return "dark"
+    else: # "auto"
+        return get_windows_theme()
+
+import tkinter.font as tkfont
+
+def _resolve_font() -> str:
+    try:
+        preferred = [
+            "Söhne", "Segoe UI Variable Display", "Segoe UI Variable",
+            "Inter", "Segoe UI", "Helvetica Neue", "Ubuntu",
+        ]
+        available = tkfont.families()
+        for f in preferred:
+            if f in available:
+                return f
+    except Exception:
+        pass
+    return "Segoe UI"
+
+FONT = "Segoe UI"
 
 THEMES = {
     "dark": {
@@ -55,6 +86,9 @@ THEMES = {
         "border_line":  "#2A2A2A",
         "scrollbar":    "#2A2A2A",
         "scrollbar_hover": "#3A3A3A",
+        "send_btn_bg":    "#1A3A5C",
+        "send_btn_fg":    "#7BB8F0",
+        "send_btn_hover": "#1E4A7A",
     },
     "light": {
         "bg":           "#F2F2F2",
@@ -80,6 +114,9 @@ THEMES = {
         "border_line":  "#E0E0E0",
         "scrollbar":    "#DDDDDD",
         "scrollbar_hover": "#CCCCCC",
+        "send_btn_bg":    "#1A5CCC",
+        "send_btn_fg":    "#FFFFFF",
+        "send_btn_hover": "#1A4FB0",
     },
 }
 
@@ -113,6 +150,24 @@ def draw_omi_logo(canvas, cx, cy, size=10, color="#FFFFFF"):
     canvas.create_oval(cx-r3, cy-r3, cx+r3, cy+r3, fill=color, outline="")
 
 
+def draw_mic_icon(canvas, cx, cy, size=8, color="#FFFFFF"):
+    """Dessine un micro simple (capsule + tige + pied en arc)."""
+    w = size * 0.55   # demi-largeur de la capsule
+    # Capsule (corps du micro) — rectangle arrondi
+    canvas.create_arc(cx - w, cy - size - w, cx + w, cy - size + w,
+                      start=0, extent=180, fill=color, outline="")
+    canvas.create_rectangle(cx - w, cy - size, cx + w, cy + size * 0.2,
+                            fill=color, outline="")
+    canvas.create_arc(cx - w, cy + size * 0.2 - w, cx + w, cy + size * 0.2 + w,
+                      start=180, extent=180, fill=color, outline="")
+    # Pied (arc sous la capsule)
+    canvas.create_arc(cx - size, cy - size * 0.2, cx + size, cy + size * 1.3,
+                      start=0, extent=-180, outline=color, width=1.5, style="arc")
+    # Tige verticale
+    canvas.create_line(cx, cy + size * 0.65, cx, cy + size, fill=color, width=1.5)
+
+
+
 class HoverButton(tk.Label):
     """Label cliquable avec effet hover via changement de couleur."""
     def __init__(self, parent, normal_fg, hover_fg, bg, **kwargs):
@@ -126,6 +181,150 @@ class HoverButton(tk.Label):
         self._normal_fg = normal_fg
         self._hover_fg = hover_fg
         self.config(fg=normal_fg, bg=bg)
+
+
+class ToggleSwitch(tk.Canvas):
+    """Bouton de bascule (toggle switch) au look moderne."""
+    def __init__(self, parent, variable, active_color, inactive_color, active_knob, inactive_knob, bg_color, command=None, **kwargs):
+        super().__init__(parent, width=34, height=20, bg=bg_color, highlightthickness=0, cursor="hand2", **kwargs)
+        self.variable = variable
+        self.active_color = active_color
+        self.inactive_color = inactive_color
+        self.active_knob = active_knob
+        self.inactive_knob = inactive_knob
+        self.bg_color = bg_color
+        self.command = command
+        
+        self.bind("<Button-1>", self._toggle)
+        self.draw()
+        
+    def _toggle(self, event):
+        self.variable.set(not self.variable.get())
+        self.draw()
+        if self.command:
+            self.command()
+            
+    def draw(self):
+        self.delete("all")
+        val = self.variable.get()
+        fill = self.active_color if val else self.inactive_color
+        # Dessine la capsule (pill shape)
+        self.create_oval(2, 2, 18, 18, fill=fill, outline="")
+        self.create_oval(16, 2, 32, 18, fill=fill, outline="")
+        self.create_rectangle(10, 2, 24, 18, fill=fill, outline="")
+        # Dessine le bouton coulissant (knob)
+        kx = 24 if val else 10
+        k_color = self.active_knob if val else self.inactive_knob
+        self.create_oval(kx-6, 10-6, kx+6, 10+6, fill=k_color, outline="")
+
+
+class SegmentedControl(tk.Canvas):
+    """Contrôle de sélection segmenté moderne et arrondi."""
+    def __init__(self, parent, variable, options, theme, radius=10, height=28, **kwargs):
+        super().__init__(parent, height=height, highlightthickness=0, bg=parent["bg"], cursor="hand2", **kwargs)
+        self.variable = variable
+        self.options = options
+        self.t = theme
+        self.radius = radius
+        
+        self.bind("<Configure>", self.draw)
+        self.bind("<Button-1>", self._on_click)
+        self.draw()
+        
+    def _on_click(self, event):
+        w = self.winfo_width()
+        if w < 10:
+            return
+        n = len(self.options)
+        seg_w = w / n
+        idx = int(event.x / seg_w)
+        if 0 <= idx < n:
+            self.variable.set(self.options[idx][0])
+            self.draw()
+            
+    def draw(self, event=None):
+        self.delete("all")
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w < 10 or h < 10:
+            return
+            
+        # Dessine le conteneur principal arrondi
+        rounded_rect(self, 1, 1, w-1, h-1, self.radius, fill=self.t["input_bg"], outline=self.t["border_line"], width=1)
+        
+        n = len(self.options)
+        seg_w = w / n
+        selected_val = self.variable.get()
+        
+        # Trouve l'index sélectionné
+        selected_idx = -1
+        for i, (val, label) in enumerate(self.options):
+            if val == selected_val:
+                selected_idx = i
+                break
+                
+        # Dessine l'arrière-plan du segment sélectionné (pilule arrondie)
+        if selected_idx != -1:
+            sx1 = selected_idx * seg_w + 3
+            sy1 = 3
+            sx2 = (selected_idx + 1) * seg_w - 3
+            sy2 = h - 3
+            rounded_rect(self, sx1, sy1, sx2, sy2, self.radius - 2, fill=self.t["surface2"], outline="", width=0)
+            
+        # Dessine les textes et séparateurs
+        for i, (val, label) in enumerate(self.options):
+            cx = i * seg_w + seg_w / 2
+            cy = h / 2
+            
+            is_sel = (val == selected_val)
+            fg_color = self.t["fg"] if is_sel else self.t["fg_sec"]
+            font_style = (FONT, 9, "bold") if is_sel else (FONT, 9)
+            
+            self.create_text(cx, cy, text=label, font=font_style, fill=fg_color)
+            
+            if i < n - 1 and i != selected_idx and (i + 1) != selected_idx:
+                sep_x = (i + 1) * seg_w
+                self.create_line(sep_x, 6, sep_x, h - 6, fill=self.t["border_line"], width=1)
+
+
+class RoundedButton(tk.Canvas):
+    """Bouton arrondi moderne avec effet de survol (hover)."""
+    def __init__(self, parent, text, command=None, font=(FONT, 9), fg="#000000", bg="#FFFFFF", hover_bg="#CCCCCC", active_fg=None, border_color="", radius=10, height=28, **kwargs):
+        super().__init__(parent, height=height, highlightthickness=0, bg=parent["bg"], cursor="hand2", **kwargs)
+        self.text = text
+        self.command = command
+        self.font = font
+        self.fg = fg
+        self.bg = bg
+        self.hover_bg = hover_bg
+        self.active_fg = active_fg if active_fg else fg
+        self.border_color = border_color
+        self.radius = radius
+        self.current_bg = bg
+        
+        self.bind("<Configure>", self.draw)
+        self.bind("<Enter>", self.on_enter)
+        self.bind("<Leave>", self.on_leave)
+        if command:
+            self.bind("<Button-1>", lambda e: self.command() if callable(self.command) else None)
+
+    def draw(self, event=None):
+        self.delete("all")
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w < 10 or h < 10:
+            return
+        outline = self.border_color if self.border_color else self.current_bg
+        rounded_rect(self, 1, 1, w-1, h-1, self.radius, fill=self.current_bg, outline=outline, width=1)
+        self.create_text(w//2, h//2, text=self.text, font=self.font, fill=self.fg)
+
+    def on_enter(self, event):
+        self.current_bg = self.hover_bg
+        self.draw()
+
+    def on_leave(self, event):
+        self.current_bg = self.bg
+        self.draw()
 
 
 class LoadingDots:
@@ -156,6 +355,30 @@ class LoadingDots:
         self._root.after(400, self._tick)
 
 
+
+
+# ─────────────────────────────────────────────────────────
+# Exclusion de capture d'écran
+# ─────────────────────────────────────────────────────────
+
+def exclude_window_from_capture(window):
+    """
+    Exclut la fenêtre des captures d'écran système (Windows uniquement).
+    Cela empêche OMI de s'analyser lui-même en rendant ses fenêtres
+    totalement invisibles pour les APIs de capture (SetWindowDisplayAffinity).
+    """
+    import platform
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            window.update_idletasks()
+            hwnd = window.winfo_id()
+            # WDA_EXCLUDEFROMCAPTURE = 0x00000011
+            ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
+        except Exception as e:
+            print(f"[ExcludeCapture] Erreur : {e}")
+
+
 # ─────────────────────────────────────────────────────────
 # Filigrane (Watermark)
 # ─────────────────────────────────────────────────────────
@@ -183,14 +406,23 @@ class OverlayWindow:
             self._draw()
         else:
             self.window = tk.Toplevel(self.root)
-            self.window.overrideredirect(True)
-            self.window.attributes("-topmost", True)
+            try:
+                self.window.overrideredirect(True)
+                if winreg is None:
+                    self.window.attributes("-type", "utility")
+            except Exception:
+                pass
+            try:
+                self.window.attributes("-topmost", True)
+            except Exception:
+                pass
+            exclude_window_from_capture(self.window)
             if winreg is not None:
                 self.window.attributes("-transparentcolor", CHROMA)
                 self.window.config(bg=CHROMA)
                 self.window.attributes("-disabled", True)
             else:
-                theme = get_windows_theme()
+                theme = get_current_theme()
                 bg_color = THEMES[theme]["bg"]
                 self.window.config(bg=bg_color)
                 try:
@@ -207,7 +439,7 @@ class OverlayWindow:
         # Limité à environ 3-4 cm (300px) et 3 lignes
         display_text = self.text
         
-        theme = get_windows_theme()
+        theme = get_current_theme()
         bg_color = CHROMA if winreg is not None else THEMES[theme]["bg"]
         font_name = "Segoe UI" if winreg is not None else "DejaVu Sans"
         lbl = tk.Label(self.window, text=display_text, font=(font_name, 11),
@@ -240,11 +472,133 @@ class PopupWindow:
         self.assistant = assistant
         self.root = root
         self.window = None
-        self._current_theme_name = get_windows_theme()
+        self._current_theme_name = get_current_theme()
         self.t = THEMES[self._current_theme_name]
         self.show_transcripts = False
         self.last_omi_message = ""
         self.overlay = OverlayWindow(self.root)
+        self.trans_btn = None
+        self.settings_btn = None
+        self.pause_label = None
+        self.show_settings = False
+        self.settings_frame = None
+
+    def _make_toolbar_btn(self, parent_canvas: tk.Canvas, icon_func,
+                           x: int, y: int, anchor: str = "e",
+                           command=None) -> tk.Canvas:
+        """
+        Creates a consistent toolbar button using a drawing function.
+        """
+        btn_canvas = tk.Canvas(parent_canvas, width=20, height=20, bg=self.t["bg"],
+                               highlightthickness=0, cursor="hand2")
+        parent_canvas.create_window(x, y, anchor=anchor, window=btn_canvas)
+
+        def draw(color):
+            btn_canvas.delete("all")
+            icon_func(btn_canvas, 10, 10, size=6, color=color)
+
+        draw(self.t["fg_sec"])
+
+        btn_canvas.bind("<Enter>", lambda e: draw(self.t["fg"]))
+        btn_canvas.bind("<Leave>", lambda e: draw(self.t["fg_sec"]))
+
+        return btn_canvas
+
+    def _make_image_btn(self, parent_canvas: tk.Canvas, img_path: str,
+                        x: int, y: int, anchor: str = "e",
+                        command=None) -> tk.Canvas:
+        """
+        Creates a consistent toolbar button using a PNG image.
+        Dynamic coloring is applied to match the active theme and hover state.
+        """
+        btn_canvas = tk.Canvas(parent_canvas, width=24, height=24, bg=self.t["bg"],
+                               highlightthickness=0, cursor="hand2")
+        parent_canvas.create_window(x, y, anchor=anchor, window=btn_canvas)
+        btn_canvas.photos = {}
+        btn_canvas.img_path = img_path
+        btn_canvas.is_active = False
+
+        def draw(color_hex):
+            btn_canvas.delete("all")
+            if color_hex not in btn_canvas.photos:
+                try:
+                    img = Image.open(btn_canvas.img_path).convert("RGBA")
+                    img = img.resize((18, 18), Image.Resampling.LANCZOS)
+                    r, g, b, alpha = img.split()
+                    h = color_hex.lstrip('#')
+                    rgb = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+                    color_img = Image.new("RGBA", img.size, rgb + (255,))
+                    color_img.putalpha(alpha)
+                    from PIL import ImageTk
+                    btn_canvas.photos[color_hex] = ImageTk.PhotoImage(color_img)
+                except Exception as e:
+                    print(f"[ImageBtn] Error loading/coloring {btn_canvas.img_path}: {e}")
+                    return
+            btn_canvas.create_image(12, 12, image=btn_canvas.photos[color_hex], anchor="center")
+
+        draw(self.t["fg_sec"])
+
+        def on_enter(e):
+            if not btn_canvas.is_active:
+                draw(self.t["fg"])
+            else:
+                draw(self.t["accent"])
+
+        def on_leave(e):
+            if not btn_canvas.is_active:
+                draw(self.t["fg_sec"])
+            else:
+                draw(self.t["accent"])
+
+        btn_canvas.bind("<Enter>", on_enter)
+        btn_canvas.bind("<Leave>", on_leave)
+        btn_canvas.draw_func = draw
+
+        if command:
+            btn_canvas.bind("<Button-1>", lambda e: command())
+
+        return btn_canvas
+
+    def _update_image_btn(self, btn_canvas, img_path):
+        """Met à jour l'image d'un bouton existant en vidant le cache et redessinant."""
+        btn_canvas.img_path = img_path
+        btn_canvas.photos = {}
+        color = self.t["accent"] if btn_canvas.is_active else self.t["fg_sec"]
+        btn_canvas.draw_func(color)
+
+    def _make_text_btn(self, parent_canvas: tk.Canvas, text: str,
+                           x: int, y: int, anchor: str = "e",
+                           font_size: int = 10, bold: bool = False,
+                           command=None) -> tk.Label:
+        """
+        Creates a consistent text-based toolbar button.
+        """
+        weight = "bold" if bold else "normal"
+        btn = tk.Label(
+            parent_canvas,
+            text=text,
+            font=(FONT, font_size, weight),
+            fg=self.t["fg_sec"],
+            bg=self.t["bg"],
+            cursor="hand2",
+            padx=2,
+        )
+        parent_canvas.create_window(x, y, anchor=anchor, window=btn)
+
+        # Hover effects
+        def on_enter(e):
+            btn.config(fg=self.t["fg"])
+        def on_leave(e):
+            btn.config(fg=self.t["fg_sec"])
+
+        btn.bind("<Enter>", on_enter)
+        btn.bind("<Leave>", on_leave)
+
+        if command:
+            btn.bind("<Button-1>", lambda e: command())
+
+        return btn
+
 
     def update_theme(self, theme_name):
         """Met à jour le thème en temps réel"""
@@ -277,10 +631,11 @@ class PopupWindow:
             return
         
         # On s'assure d'avoir le dernier thème au moment de l'ouverture
-        self._current_theme_name = get_windows_theme()
+        self._current_theme_name = get_current_theme()
         self.t = THEMES[self._current_theme_name]
         
         self.window = tk.Toplevel(self.root)
+        exclude_window_from_capture(self.window)
         self._build_ui()
 
     def minimize(self, event=None):
@@ -304,16 +659,33 @@ class PopupWindow:
         win.title("OMI")
         win.geometry(f"{W}x{H}")
         win.resizable(False, False)
-        win.overrideredirect(True)
-        win.attributes("-topmost", True)
-        win.configure(bg=CHROMA)
-        win.attributes("-transparentcolor", CHROMA)
+        try:
+            win.overrideredirect(True)
+            if winreg is None:
+                win.attributes("-type", "utility")
+        except Exception:
+            pass
+
+        try:
+            win.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        if winreg is not None:
+            win.configure(bg=CHROMA)
+            try:
+                win.attributes("-transparentcolor", CHROMA)
+            except Exception:
+                pass
+        else:
+            win.configure(bg=t["bg"])
 
         sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
         win.geometry(f"{W}x{H}+{sw - W - 16}+{sh - H - 52}")
 
         # Canvas principal
-        root_canvas = tk.Canvas(win, width=W, height=H, bg=CHROMA,
+        canvas_bg = CHROMA if winreg is not None else t["bg"]
+        root_canvas = tk.Canvas(win, width=W, height=H, bg=canvas_bg,
                                 highlightthickness=0, bd=0)
         root_canvas.place(x=0, y=0)
         rounded_rect(root_canvas, 0, 0, W, H, R,
@@ -329,10 +701,14 @@ class PopupWindow:
         draw_omi_logo(root_canvas, 22, HEADER_H // 2, size=9,
                       color=t["accent"])
 
-        # Titre
-        root_canvas.create_text(38, HEADER_H // 2, text="OMI",
-                                font=("Segoe UI", 11, "bold"),
-                                fill=t["fg"], anchor="w")
+        # Titre (clickable = minimize)
+        lbl_title = tk.Label(
+            root_canvas, text="OMI",
+            font=(FONT, 11, "bold"),
+            fg=self.t["fg"], bg=self.t["bg"], cursor="hand2"
+        )
+        root_canvas.create_window(38, HEADER_H // 2, anchor="w", window=lbl_title)
+        lbl_title.bind("<Button-1>", self.minimize)
 
         # Badge persona (petit, discret)
         persona_labels = {
@@ -347,47 +723,54 @@ class PopupWindow:
         rounded_rect(badge_canvas, 0, 0, 34, 16, 4,
                      fill=t["badge_bg"], outline="")
         badge_canvas.create_text(17, 8, text=persona_text,
-                                 font=("Segoe UI", 7, "bold"),
+                                 font=(FONT, 7, "bold"),
                                  fill=t["badge_fg"])
 
-        # Séparateur horizontal sous le header
-        root_canvas.create_line(0, HEADER_H, W, HEADER_H,
-                                fill=t["border_line"], width=1)
 
         # Boutons de contrôle (droite)
         PAD_RIGHT = 14
-        btn_y = HEADER_H // 2
-        btn_specs = [
-            ("×",  "Segoe UI", 16, self.close_completely, W - PAD_RIGHT),
-            ("—",  "Segoe UI", 11, self.minimize,         W - PAD_RIGHT - 28),
-            ("⏸",  "Segoe UI", 10, self._toggle_pause,    W - PAD_RIGHT - 56),
-            ("🎙️", "Segoe UI", 10, self._toggle_transcripts, W - PAD_RIGHT - 82),
-            ("↺",  "Segoe UI", 13, self._force_analyze,   W - PAD_RIGHT - 108),
-        ]
-        self._header_btns = []
-        for txt, font_name, font_size, cmd, x in btn_specs:
-            btn = HoverButton(root_canvas,
-                              normal_fg=t["fg_sec"],
-                              hover_fg=t["accent"],
-                              bg=t["bg"],
-                              text=txt,
-                              font=(font_name, font_size),
-                              cursor="hand2")
-            root_canvas.create_window(x, btn_y, anchor="e", window=btn)
-            btn.bind("<Button-1>", lambda e, c=cmd: c())
-            self._header_btns.append(btn)
+        BTN_Y = HEADER_H // 2
+        
+        # Close ×
+        self._make_text_btn(root_canvas, "×", W - PAD_RIGHT, BTN_Y, anchor="e",
+                                font_size=15, command=self.close_completely)
+        # Minimize —
+        self._make_text_btn(root_canvas, "–", W - PAD_RIGHT - 30, BTN_Y, anchor="e",
+                                font_size=11, command=self.minimize)
+        # ── 14px gap before tool buttons ──
+        TOOL_OFFSET = 72
+        current_x = W - PAD_RIGHT - TOOL_OFFSET
 
-        self.pause_label = self._header_btns[2]  # référence pour toggle_pause
+        # 1. Settings (Cog icon) - placed first (rightmost tool)
+        self.settings_btn = self._make_image_btn(
+            root_canvas, os.path.join(UI_DIR, "setting.png"), current_x, BTN_Y, anchor="e",
+            command=self._toggle_settings
+        )
+        current_x -= 30
 
-        # Mode badge (en bas à droite de la titlebar)
-        self._mode_canvas = tk.Canvas(root_canvas, width=60, height=14,
-                                      bg=t["bg"], highlightthickness=0)
-        root_canvas.create_window(W // 2, HEADER_H // 2, anchor="center",
-                                  window=self._mode_canvas)
-        self._mode_rect = rounded_rect(self._mode_canvas, 0, 0, 60, 14, 4,
-                                       fill=t["badge_bg"], outline="")
-        self._mode_label = self._mode_canvas.create_text(
-            30, 7, text="", font=("Segoe UI", 7), fill=t["badge_fg"])
+        # 2. Transcripts (Mic icon) - only if microphone is enabled!
+        if config.ENABLE_MICROPHONE:
+            self.trans_btn = self._make_image_btn(
+                root_canvas, os.path.join(UI_DIR, "micro.png"), current_x, BTN_Y, anchor="e",
+                command=self._toggle_transcripts
+            )
+            current_x -= 30
+        else:
+            self.trans_btn = None
+
+        # 3. Pause/Resume: Pause/Play icon
+        pause_icon = "play.png" if self.assistant.paused else "pause.png"
+        self.pause_label = self._make_image_btn(
+            root_canvas, os.path.join(UI_DIR, pause_icon), current_x, BTN_Y, anchor="e",
+            command=self._toggle_pause
+        )
+        current_x -= 30
+
+        # 4. Analyze: Refresh icon
+        self._make_image_btn(
+            root_canvas, os.path.join(UI_DIR, "refresh.png"), current_x, BTN_Y, anchor="e",
+            command=self._force_analyze
+        )
 
         # ── Zone messages ─────────────────────────────────────
         PAD = 12
@@ -397,16 +780,16 @@ class PopupWindow:
         MSG_H = H - MSG_Y - INPUT_H - BOTTOM_PAD - 8
 
         # Conteneur messages
-        msg_frame = tk.Frame(root_canvas, bg=t["bg"])
+        self.msg_frame = tk.Frame(root_canvas, bg=t["bg"])
         root_canvas.create_window(PAD, MSG_Y, anchor="nw",
-                                  window=msg_frame,
+                                  window=self.msg_frame,
                                   width=W - PAD * 2,
                                   height=MSG_H)
 
         self.msg_text = tk.Text(
-            msg_frame,
+            self.msg_frame,
             wrap="word",
-            font=("Segoe UI", 10),
+            font=(FONT, 10),
             bg=t["bg"],
             fg=t["fg"],
             bd=0,
@@ -436,7 +819,7 @@ class PopupWindow:
 
         # Zone transcriptions (cachée)
         self.trans_text = tk.Text(
-            msg_frame,
+            self.msg_frame,
             wrap="word",
             font=("Consolas", 9),
             bg=t["bg"],
@@ -452,29 +835,29 @@ class PopupWindow:
         # Tags messages — style moderne
         self.msg_text.tag_config("ts",
             foreground=t["fg_ter"],
-            font=("Segoe UI", 7),
+            font=(FONT, 7),
             spacing1=8)
         self.msg_text.tag_config("sender_omi",
             foreground=t["fg_sec"],
-            font=("Segoe UI", 8, "bold"),
-            spacing1=10, spacing3=1)
+            font=(FONT, 8, "bold"),
+            spacing1=8)
         self.msg_text.tag_config("text_omi",
             foreground=t["fg_omi"],
-            font=("Segoe UI", 10),
+            font=(FONT, 10),
             lmargin1=0, lmargin2=0,
-            spacing3=2)
+            spacing3=4)
         self.msg_text.tag_config("sender_you",
             foreground=t["fg_sec"],
-            font=("Segoe UI", 8, "bold"),
-            spacing1=10, spacing3=1)
+            font=(FONT, 8, "bold"),
+            spacing1=8)
         self.msg_text.tag_config("text_you",
-            foreground=t["accent_dim"],
-            font=("Segoe UI", 10, "italic"),
+            foreground=t["fg"],
+            font=(FONT, 10),
             lmargin1=0, lmargin2=0,
-            spacing3=2)
+            spacing3=4)
         self.msg_text.tag_config("text_system",
             foreground=t["fg_ter"],
-            font=("Segoe UI", 8, "italic"),
+            font=(FONT, 8, "italic"),
             spacing1=4, spacing3=4)
 
         self._load_history()
@@ -494,13 +877,18 @@ class PopupWindow:
         self._placeholder_active = True
         entry = tk.Entry(input_canvas,
                          textvariable=self.input_var,
-                         font=("Segoe UI", 10),
+                         font=(FONT, 10),
                          bg=t["input_bg"], fg=t["fg_sec"],
                          insertbackground=t["fg"],
                          bd=0, highlightthickness=0)
-        input_canvas.create_window(12, INPUT_H // 2, anchor="w",
+        
+        SEND_W, SEND_H = 34, 26   # Size of the blue send button
+        SEND_R = 8                 # Corner radius
+        
+        input_canvas.create_window(10, INPUT_H // 2, anchor="w",
                                    window=entry,
-                                   width=INPUT_W - 50, height=22)
+                                   width=W - PAD*2 - SEND_W - 20,
+                                   height=24)
 
         # Gestion placeholder
         def _focus_in(e):
@@ -522,17 +910,76 @@ class PopupWindow:
         entry.bind("<Return>", self._send)
         self.input_var.set("Écris un message...")
 
-        # Bouton envoi
-        send_btn = HoverButton(input_canvas,
-                               normal_fg=t["fg_sec"],
-                               hover_fg=t["accent"],
-                               bg=t["input_bg"],
-                               text="↑",
-                               font=("Segoe UI", 14, "bold"),
-                               cursor="hand2")
-        input_canvas.create_window(INPUT_W - 18, INPUT_H // 2,
-                                   anchor="center", window=send_btn)
-        send_btn.bind("<Button-1>", self._send)
+        # Canvas inside input_canvas to hold the send button
+        send_canvas = tk.Canvas(
+            input_canvas,
+            width=SEND_W,
+            height=SEND_H,
+            bg=t["input_bg"],
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
+        input_canvas.create_window(
+            INPUT_W - 6, INPUT_H // 2,
+            anchor="e", window=send_canvas,
+            width=SEND_W, height=SEND_H
+        )
+
+        def _draw_send_btn(pressed: bool = False):
+            send_canvas.delete("all")
+            # --- MODIFICATION ---
+            # Remplacement de l'icône dessinée par send.png
+            if not hasattr(send_canvas, 'photo'):
+                try:
+                    img = Image.open(os.path.join(UI_DIR, "send.png")).convert("RGBA")
+                    img = img.resize((16, 16), Image.Resampling.LANCZOS)
+                    r, g, b, alpha = img.split()
+                    # Couleur accentuée (fg_omi)
+                    h = t["send_btn_fg"].lstrip('#')
+                    rgb = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+                    color_img = Image.new("RGBA", img.size, rgb + (255,))
+                    color_img.putalpha(alpha)
+                    from PIL import ImageTk
+                    send_canvas.photo = ImageTk.PhotoImage(color_img)
+                except Exception as e:
+                    print(f"Error loading send icon: {e}")
+            
+            bg = t["send_btn_bg"]
+            # Draw rounded rectangle
+            pts = [
+                SEND_R, 0,   SEND_W - SEND_R, 0,
+                SEND_W, 0,   SEND_W, SEND_R,
+                SEND_W, SEND_H - SEND_R, SEND_W, SEND_H,
+                SEND_W - SEND_R, SEND_H, SEND_R, SEND_H,
+                0, SEND_H, 0, SEND_H - SEND_R,
+                0, SEND_R, 0, 0,
+            ]
+            send_canvas.create_polygon(pts, smooth=True, fill=bg, outline="")
+            if hasattr(send_canvas, 'photo'):
+                send_canvas.create_image(SEND_W // 2, SEND_H // 2, image=send_canvas.photo, anchor="center")
+
+        _draw_send_btn()
+
+        # Hover and click effects
+        def _on_send_enter(e): 
+            send_canvas.config(cursor="hand2")
+            # Slightly brighter on hover — redraw
+            send_canvas.delete("all")
+            pts = [SEND_R,0, SEND_W-SEND_R,0, SEND_W,0, SEND_W,SEND_R,
+                   SEND_W,SEND_H-SEND_R, SEND_W,SEND_H, SEND_W-SEND_R,SEND_H,
+                   SEND_R,SEND_H, 0,SEND_H, 0,SEND_H-SEND_R, 0,SEND_R, 0,0]
+            hover_bg = t.get("send_btn_hover", t["send_btn_bg"])
+            send_canvas.create_polygon(pts, smooth=True, fill=hover_bg, outline="")
+            if hasattr(send_canvas, 'photo'):
+                send_canvas.create_image(SEND_W // 2, SEND_H // 2, image=send_canvas.photo, anchor="center")
+
+        def _on_send_leave(e):
+            _draw_send_btn()
+
+        send_canvas.bind("<Enter>", _on_send_enter)
+        send_canvas.bind("<Leave>", _on_send_leave)
+        send_canvas.bind("<Button-1>", self._send)
 
         # Référencer pour le thème
         self._input_canvas = input_canvas
@@ -564,11 +1011,7 @@ class PopupWindow:
 
     def set_mode_badge(self, mode: str):
         """Met à jour le badge de mode (DOCUMENT / TEXTE / IMAGE) dans le header."""
-        if not hasattr(self, '_mode_canvas') or not self.window:
-            return
-        labels = {"document": "DOC", "texte": "TXT", "image": "IMG"}
-        text = labels.get(mode, "")
-        self._mode_canvas.itemconfig(self._mode_label, text=text)
+        pass
 
 
     # ── Drag ──────────────────────────────────────────────
@@ -696,9 +1139,21 @@ class PopupWindow:
     def _toggle_transcripts(self, event=None):
         self.show_transcripts = not self.show_transcripts
         if self.show_transcripts:
+            self.show_settings = False
+            if self.settings_frame:
+                self.settings_frame.destroy()
+                self.settings_frame = None
+            if self.settings_btn:
+                self.settings_btn.is_active = False
+                self.settings_btn.draw_func(self.t["fg_sec"])
+            
             self.msg_text.pack_forget()
             self.trans_text.pack(fill="both", expand=True)
-            self.trans_btn.config(fg=self.t["accent"])
+            # Highlight as active
+            if self.trans_btn:
+                self.trans_btn.is_active = True
+                self.trans_btn.draw_func(self.t["accent"])
+            
             # Charger les dernières transcriptions
             from core.database import query_transcripts
             recent = query_transcripts(limit=20)
@@ -711,7 +1166,10 @@ class PopupWindow:
         else:
             self.trans_text.pack_forget()
             self.msg_text.pack(fill="both", expand=True)
-            self.trans_btn.config(fg=self.t["fg_sec"])
+            # Re-draw the mic icon with inactive color
+            if self.trans_btn:
+                self.trans_btn.is_active = False
+                self.trans_btn.draw_func(self.t["fg_sec"])
 
     def _add_transcript_to_ui(self, text):
         if self.window and self.window.winfo_exists():
@@ -726,14 +1184,215 @@ class PopupWindow:
 
     def _toggle_pause(self, event=None):
         is_paused = self.assistant.toggle_pause()
-        if hasattr(self, 'pause_label'):
-            self.pause_label.config(text="▶" if is_paused else "⏸")
+        if hasattr(self, 'pause_label') and self.pause_label:
+            icon_name = "play.png" if is_paused else "pause.png"
+            self._update_image_btn(self.pause_label, os.path.join(UI_DIR, icon_name))
         msg = "Analyse en pause." if is_paused else "Analyse reprend."
         t = self.msg_text
         t.config(state="normal")
         t.insert("end", f"\n{msg}\n", "text_system")
         t.config(state="disabled")
         t.see("end")
+
+    def _toggle_settings(self, event=None):
+        self.show_settings = not self.show_settings
+        
+        if self.show_settings:
+            self.show_transcripts = False
+            
+            # Hide chat/transcripts texts
+            self.msg_text.pack_forget()
+            self.trans_text.pack_forget()
+            
+            # Highlight settings button as active, transcripts as inactive
+            if self.settings_btn:
+                self.settings_btn.is_active = True
+                self.settings_btn.draw_func(self.t["accent"])
+            if self.trans_btn:
+                self.trans_btn.is_active = False
+                self.trans_btn.draw_func(self.t["fg_sec"])
+                
+            self._build_settings_ui()
+        else:
+            if self.settings_frame:
+                self.settings_frame.destroy()
+                self.settings_frame = None
+                
+            if self.settings_btn:
+                self.settings_btn.is_active = False
+                self.settings_btn.draw_func(self.t["fg_sec"])
+                
+            if self.show_transcripts:
+                self.trans_text.pack(fill="both", expand=True)
+                if self.trans_btn:
+                    self.trans_btn.is_active = True
+                    self.trans_btn.draw_func(self.t["accent"])
+            else:
+                self.msg_text.pack(fill="both", expand=True)
+
+    def _build_settings_ui(self):
+        if self.settings_frame:
+            self.settings_frame.destroy()
+            
+        t = self.t
+        sf = tk.Frame(self.msg_frame, bg=t["bg"])
+        self.settings_frame = sf
+        sf.pack(fill="both", expand=True)
+        
+        # Title
+        tk.Label(
+            sf, text="Paramètres OMI",
+            font=(FONT, 12, "bold"),
+            fg=t["fg"], bg=t["bg"]
+        ).pack(anchor="w", pady=(5, 10))
+        
+        theme_var = tk.StringVar(value=config.THEME)
+        cam_var = tk.BooleanVar(value=config.ENABLE_CAMERA)
+        mic_var = tk.BooleanVar(value=config.ENABLE_MICROPHONE)
+        
+        # 4. Actions (Packed SIDE="BOTTOM" FIRST to guarantee visibility!)
+        btn_frame = tk.Frame(sf, bg=t["bg"])
+        btn_frame.pack(fill="x", side="bottom", pady=(5, 5))
+        
+        def save():
+            new_theme = theme_var.get()
+            new_cam = cam_var.get()
+            new_mic = mic_var.get()
+            new_obj = obj_text.get("1.0", "end-1c").strip()
+            
+            # Save config
+            config.save_config({
+                "THEME": new_theme,
+                "ENABLE_CAMERA": str(new_cam),
+                "ENABLE_MICROPHONE": str(new_mic),
+                "OMI_OBJECTIVE": new_obj
+            })
+            
+            # Rebuild assistant session with new prompt/objective
+            self.assistant.update_prompt_objective(new_obj)
+            
+            # Reset settings view toggles
+            self.show_settings = False
+            if self.settings_frame:
+                self.settings_frame.destroy()
+                self.settings_frame = None
+                
+            # Recreate main UI window to apply theme and layout immediately
+            if self.window and self.window.winfo_exists():
+                current_input = self.input_var.get()
+                is_visible = self.window.winfo_viewable()
+                self.window.destroy()
+                self.window = None
+                if is_visible:
+                    self.show()
+                    if hasattr(self, 'input_var'):
+                        self.input_var.set(current_input)
+            
+        btn_annuler = RoundedButton(
+            btn_frame, text="Annuler", command=self._toggle_settings,
+            font=(FONT, 9), fg=t["fg"], bg=t["surface"], hover_bg=t["surface2"],
+            radius=8, width=80, height=28
+        )
+        btn_annuler.pack(side="left")
+        
+        btn_save = RoundedButton(
+            btn_frame, text="Enregistrer", command=save,
+            font=(FONT, 9, "bold"), fg=t["bg"], bg=t["accent"], hover_bg=t["accent_dim"],
+            radius=8, width=100, height=28
+        )
+        btn_save.pack(side="right")
+        
+        # 1. Thème
+        tk.Label(
+            sf, text="Thème",
+            font=(FONT, 9, "bold"),
+            fg=t["fg_sec"], bg=t["bg"]
+        ).pack(anchor="w", pady=(5, 4))
+        
+        theme_options = [("auto", "Auto"), ("light", "Clair"), ("dark", "Sombre")]
+        theme_selector = SegmentedControl(sf, theme_var, theme_options, t)
+        theme_selector.pack(fill="x", pady=(0, 15))
+            
+        # 2. Caméra & Micro (hardware)
+        tk.Label(
+            sf, text="Matériel",
+            font=(FONT, 9, "bold"),
+            fg=t["fg_sec"], bg=t["bg"]
+        ).pack(anchor="w", pady=(5, 4))
+        
+        hardware_frame = tk.Frame(sf, bg=t["bg"])
+        hardware_frame.pack(fill="x", pady=(0, 10))
+        
+        # Row for Camera toggle
+        cam_row = tk.Frame(hardware_frame, bg=t["bg"])
+        cam_row.pack(fill="x", pady=4)
+        tk.Label(
+            cam_row, text="Activer la caméra", font=(FONT, 9),
+            fg=t["fg"], bg=t["bg"], anchor="w"
+        ).pack(side="left", fill="x", expand=True)
+        ts_cam = ToggleSwitch(
+            cam_row, cam_var,
+            active_color=t["send_btn_bg"],
+            inactive_color=t["surface2"],
+            active_knob=t["send_btn_fg"],
+            inactive_knob=t["fg_sec"],
+            bg_color=t["bg"]
+        )
+        ts_cam.pack(side="right")
+        
+        # Row for Microphone toggle
+        mic_row = tk.Frame(hardware_frame, bg=t["bg"])
+        mic_row.pack(fill="x", pady=4)
+        tk.Label(
+            mic_row, text="Activer la transcription micro", font=(FONT, 9),
+            fg=t["fg"], bg=t["bg"], anchor="w"
+        ).pack(side="left", fill="x", expand=True)
+        ts_mic = ToggleSwitch(
+            mic_row, mic_var,
+            active_color=t["send_btn_bg"],
+            inactive_color=t["surface2"],
+            active_knob=t["send_btn_fg"],
+            inactive_knob=t["fg_sec"],
+            bg_color=t["bg"]
+        )
+        ts_mic.pack(side="right")
+        
+        # 3. Objectif OMI
+        tk.Label(
+            sf, text="Objectif principal (contexte Gemini)",
+            font=(FONT, 9, "bold"),
+            fg=t["fg_sec"], bg=t["bg"]
+        ).pack(anchor="w", pady=(5, 4))
+        
+        obj_canvas = tk.Canvas(sf, height=70, bg=t["bg"], highlightthickness=0)
+        obj_canvas.pack(fill="both", expand=True, pady=(0, 15))
+        
+        obj_text = tk.Text(
+            obj_canvas, font=(FONT, 9), wrap="word",
+            bg=t["input_bg"], fg=t["fg"],
+            insertbackground=t["fg"],
+            bd=0, highlightthickness=0
+        )
+        
+        text_window = None
+        def draw_rect(event):
+            nonlocal text_window
+            obj_canvas.delete("bg_rect")
+            rounded_rect(obj_canvas, 1, 1, event.width-1, event.height-1, 12,
+                         fill=t["input_bg"], outline=t["border_line"], width=1, tag="bg_rect")
+            if text_window is None:
+                text_window = obj_canvas.create_window(8, 8, anchor="nw", window=obj_text,
+                                                       width=event.width-16, height=event.height-16)
+            else:
+                obj_canvas.itemconfig(text_window, width=event.width-16, height=event.height-16)
+                
+        obj_canvas.bind("<Configure>", draw_rect)
+        obj_text.insert("1.0", config.OMI_OBJECTIVE)
+
+    def show_settings_from_tray(self):
+        self.show()
+        self.show_settings = False
+        self._toggle_settings()
 
     def _force_analyze(self, event=None):
         self._append("SYSTÈME", "Analyse en cours...", "sender_omi", "text_omi")
@@ -750,33 +1409,6 @@ class PopupWindow:
 
     def _refresh_history(self): pass
     def _set_chat_response(self, text): pass
-
-    def update_theme(self, theme_name):
-        """Met à jour le thème en temps réel"""
-        if theme_name == self._current_theme_name:
-            return
-            
-        self._current_theme_name = theme_name
-        self.t = THEMES[theme_name]
-        
-        # Mettre à jour les couleurs des HoverButtons si la fenêtre existe
-        if self.window and self.window.winfo_exists() and hasattr(self, '_header_btns'):
-            for btn in self._header_btns:
-                btn.update_colors(self.t["fg_sec"], self.t["accent"], self.t["bg"])
-
-        if self.window and self.window.winfo_exists():
-            # Sauvegarde de l'état actuel
-            current_input = self.input_var.get()
-            is_visible = self.window.winfo_viewable()
-            
-            # On détruit et on recrée pour appliquer proprement les nouvelles couleurs
-            self.window.destroy()
-            self.window = None
-            
-            if is_visible:
-                self.show()
-                if hasattr(self, 'input_var'):
-                    self.input_var.set(current_input)
 
 
 # ─────────────────────────────────────────────────────────
@@ -798,12 +1430,15 @@ class TrayApp:
         self.assistant = assistant
         self.popup = None
         self._root = None
-        self._current_theme_name = get_windows_theme()
+        self._current_theme_name = get_current_theme()
 
     def run(self):
         self._root = tk.Tk()
         self._root.withdraw()
         self._root.title("OmiAssistant")
+
+        global FONT
+        FONT = _resolve_font()
 
         self.popup = PopupWindow(self.assistant, self._root)
         self.assistant.on_suggestion_callback = self._on_new_suggestion
@@ -816,6 +1451,7 @@ class TrayApp:
         icon_img = create_icon_image()
         menu = pystray.Menu(
             pystray.MenuItem("Ouvrir", self._open_popup, default=True),
+            pystray.MenuItem("Paramètres", self._open_settings_from_tray),
             pystray.MenuItem("Quitter", self._quit),
         )
         self.icon = pystray.Icon("OmiAssistant", icon_img, "Omi", menu=menu)
@@ -825,7 +1461,7 @@ class TrayApp:
 
     def _check_theme_loop(self):
         """Vérifie périodiquement si le thème Windows a changé"""
-        new_theme = get_windows_theme()
+        new_theme = get_current_theme()
         if new_theme != self._current_theme_name:
             self._current_theme_name = new_theme
             if self.popup:
@@ -836,6 +1472,10 @@ class TrayApp:
 
     def _open_popup(self, icon=None, item=None):
         self._root.after(0, self.popup.show)
+
+    def _open_settings_from_tray(self, icon=None, item=None):
+        if self.popup:
+            self._root.after(0, self.popup.show_settings_from_tray)
 
     def _on_new_suggestion(self, text):
         if self.popup and self.popup.window and self.popup.window.winfo_exists():

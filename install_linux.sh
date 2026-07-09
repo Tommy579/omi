@@ -51,29 +51,138 @@ ok "API key saved to .env"
 # ── Step 1: System dependencies ─────────────────────────
 step "🔧 Checking system dependencies"
 
-MISSING_PKGS=()
+# Helper to run ldconfig on various paths
+run_ldconfig() {
+    if command -v ldconfig &>/dev/null; then
+        ldconfig -p
+    elif [ -x /sbin/ldconfig ]; then
+        /sbin/ldconfig -p
+    elif [ -x /usr/sbin/ldconfig ]; then
+        /usr/sbin/ldconfig -p
+    fi
+}
 
-command -v python3 &>/dev/null || MISSING_PKGS+=("python3")
-command -v pip3   &>/dev/null || MISSING_PKGS+=("python3-pip")
-python3 -c "import venv" 2>/dev/null || MISSING_PKGS+=("python3-venv")
-command -v git    &>/dev/null || MISSING_PKGS+=("git")
-
-# Required for audio capture (sounddevice / PortAudio)
-if ! ldconfig -p 2>/dev/null | grep -q libportaudio; then
-    MISSING_PKGS+=("libportaudio2")
+# Detect package manager
+if command -v apt-get &>/dev/null; then
+    PKG_MANAGER="apt"
+elif command -v pacman &>/dev/null; then
+    PKG_MANAGER="pacman"
+elif command -v dnf &>/dev/null; then
+    PKG_MANAGER="dnf"
+elif command -v yum &>/dev/null; then
+    PKG_MANAGER="yum"
+elif command -v zypper &>/dev/null; then
+    PKG_MANAGER="zypper"
+else
+    PKG_MANAGER="unknown"
 fi
 
-# Required for screen capture (mss / X11) and OpenCV
-for lib in libx11-dev libxrandr-dev libgl1; do
-    dpkg -s "$lib" &>/dev/null 2>&1 || MISSING_PKGS+=("$lib")
+MISSING_DEPS=()
+
+# Check for commands
+command -v python3 &>/dev/null || MISSING_DEPS+=("python3")
+command -v pip3   &>/dev/null || MISSING_DEPS+=("pip")
+python3 -c "import venv" 2>/dev/null || MISSING_DEPS+=("venv")
+command -v git    &>/dev/null || MISSING_DEPS+=("git")
+
+# Check for libraries
+LD_LIBS=$(run_ldconfig)
+if ! echo "$LD_LIBS" | grep -q libportaudio; then
+    MISSING_DEPS+=("portaudio")
+fi
+if ! echo "$LD_LIBS" | grep -q libX11; then
+    MISSING_DEPS+=("x11")
+fi
+if ! echo "$LD_LIBS" | grep -q libXrandr; then
+    MISSING_DEPS+=("xrandr")
+fi
+if ! echo "$LD_LIBS" | grep -q -E 'libGL\.so|libGLvnd'; then
+    MISSING_DEPS+=("gl")
+fi
+
+PKGS_TO_INSTALL=()
+
+for dep in "${MISSING_DEPS[@]}"; do
+    case "$PKG_MANAGER" in
+        apt)
+            case "$dep" in
+                python3)   PKGS_TO_INSTALL+=("python3") ;;
+                pip)       PKGS_TO_INSTALL+=("python3-pip") ;;
+                venv)      PKGS_TO_INSTALL+=("python3-venv") ;;
+                git)       PKGS_TO_INSTALL+=("git") ;;
+                portaudio) PKGS_TO_INSTALL+=("libportaudio2") ;;
+                x11)       PKGS_TO_INSTALL+=("libx11-dev") ;;
+                xrandr)    PKGS_TO_INSTALL+=("libxrandr-dev") ;;
+                gl)        PKGS_TO_INSTALL+=("libgl1") ;;
+            esac
+            ;;
+        pacman)
+            case "$dep" in
+                python3)   PKGS_TO_INSTALL+=("python") ;;
+                pip)       PKGS_TO_INSTALL+=("python-pip") ;;
+                venv)      ;; # included in python on Arch
+                git)       PKGS_TO_INSTALL+=("git") ;;
+                portaudio) PKGS_TO_INSTALL+=("portaudio") ;;
+                x11)       PKGS_TO_INSTALL+=("libx11") ;;
+                xrandr)    PKGS_TO_INSTALL+=("libxrandr") ;;
+                gl)        PKGS_TO_INSTALL+=("libglvnd") ;;
+            esac
+            ;;
+        dnf|yum)
+            case "$dep" in
+                python3)   PKGS_TO_INSTALL+=("python3") ;;
+                pip)       PKGS_TO_INSTALL+=("python3-pip") ;;
+                venv)      PKGS_TO_INSTALL+=("python3-venv") ;;
+                git)       PKGS_TO_INSTALL+=("git") ;;
+                portaudio) PKGS_TO_INSTALL+=("portaudio") ;;
+                x11)       PKGS_TO_INSTALL+=("libX11-devel") ;;
+                xrandr)    PKGS_TO_INSTALL+=("libXrandr-devel") ;;
+                gl)        PKGS_TO_INSTALL+=("libglvnd") ;;
+            esac
+            ;;
+        zypper)
+            case "$dep" in
+                python3)   PKGS_TO_INSTALL+=("python3") ;;
+                pip)       PKGS_TO_INSTALL+=("python3-pip") ;;
+                venv)      PKGS_TO_INSTALL+=("python3-venv") ;;
+                git)       PKGS_TO_INSTALL+=("git") ;;
+                portaudio) PKGS_TO_INSTALL+=("portaudio") ;;
+                x11)       PKGS_TO_INSTALL+=("libX11-devel") ;;
+                xrandr)    PKGS_TO_INSTALL+=("libXrandr-devel") ;;
+                gl)        PKGS_TO_INSTALL+=("Mesa-libGL1") ;;
+            esac
+            ;;
+    esac
 done
 
-if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
-    warn "Missing system packages: ${MISSING_PKGS[*]}"
-    echo -e "  Installing via apt...\n"
-    sudo apt-get update -qq
-    sudo apt-get install -y "${MISSING_PKGS[@]}"
-    ok "System packages installed"
+if [ ${#PKGS_TO_INSTALL[@]} -gt 0 ]; then
+    warn "Missing system dependencies: ${MISSING_DEPS[*]}"
+    if [ "$PKG_MANAGER" = "apt" ]; then
+        echo -e "  Installing via apt...\n"
+        sudo apt-get update -qq
+        sudo apt-get install -y "${PKGS_TO_INSTALL[@]}"
+        ok "System packages installed"
+    elif [ "$PKG_MANAGER" = "pacman" ]; then
+        echo -e "  Installing via pacman...\n"
+        sudo pacman -Syu --needed --noconfirm "${PKGS_TO_INSTALL[@]}"
+        ok "System packages installed"
+    elif [ "$PKG_MANAGER" = "dnf" ]; then
+        echo -e "  Installing via dnf...\n"
+        sudo dnf install -y "${PKGS_TO_INSTALL[@]}"
+        ok "System packages installed"
+    elif [ "$PKG_MANAGER" = "yum" ]; then
+        echo -e "  Installing via yum...\n"
+        sudo yum install -y "${PKGS_TO_INSTALL[@]}"
+        ok "System packages installed"
+    elif [ "$PKG_MANAGER" = "zypper" ]; then
+        echo -e "  Installing via zypper...\n"
+        sudo zypper install -y "${PKGS_TO_INSTALL[@]}"
+        ok "System packages installed"
+    else
+        warn "Could not automatically install packages for your distribution."
+        warn "Please manually install equivalent packages for: ${MISSING_DEPS[*]}"
+        read -rp "  Press Enter to continue installation anyway, or Ctrl+C to abort..."
+    fi
 else
     ok "All system dependencies present"
 fi
