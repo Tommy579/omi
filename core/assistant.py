@@ -15,15 +15,13 @@ from google import genai
 import mss
 from PIL import Image
 
+import config
 from config import (
     GEMINI_API_KEY,
     GEMINI_MODEL,
     SCREEN_CAPTURE_INTERVAL,
-    ENABLE_CAMERA,
     CAMERA_CAPTURE_INTERVAL,
-    SYSTEM_PROMPT,
     MAX_MEMORY_ITEMS,
-    ENABLE_MICROPHONE,
     AUDIO_SEGMENT_DURATION,
     ALLOW_AUTONOMOUS_UI_INTERACTION,
     SCREEN_CAPTURE_SIZE,
@@ -79,41 +77,40 @@ class Assistant:
         # Détection de la caméra
         self._camera = None
         self.is_camera_available = False
-        if ENABLE_CAMERA:
-            try:
-                self._camera = cv2.VideoCapture(0)
-                if self._camera is not None and self._camera.isOpened():
-                    self.is_camera_available = True
-                else:
-                    self._camera = None
-                    print("[Caméra] Aucun périphérique trouvé.")
-            except Exception as e:
-                print(f"[Caméra] Erreur init : {e}")
+        try:
+            temp_cap = cv2.VideoCapture(0)
+            if temp_cap is not None and temp_cap.isOpened():
+                self.is_camera_available = True
+                temp_cap.release()
+        except Exception:
+            pass
+
+        if self.is_camera_available and config.ENABLE_CAMERA:
+            self._init_camera()
 
         # Détection du microphone
         self.is_mic_available = False
-        if ENABLE_MICROPHONE:
-            try:
-                import sounddevice as sd
-                devices = sd.query_devices()
-                if any(d.get('max_input_channels', 0) > 0 for d in devices):
-                    self.is_mic_available = True
-                else:
-                    print("[Micro] Aucun microphone détecté sur l'appareil.")
-            except Exception as e:
-                print(f"[Micro] Erreur détection microphone : {e}")
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            if any(d.get('max_input_channels', 0) > 0 for d in devices):
+                self.is_mic_available = True
+            else:
+                print("[Micro] Aucun microphone détecté sur l'appareil.")
+        except Exception as e:
+            print(f"[Micro] Erreur détection microphone : {e}")
 
         # On définit un prompt système plus complet pour le côté agent
-        enhanced_prompt = SYSTEM_PROMPT + "\n\n"
+        enhanced_prompt = config.SYSTEM_PROMPT + "\n\n"
         
         # Ajout des informations sur la disponibilité du matériel
         hardware_info = "### DISPONIBILITÉ DU MATÉRIEL (CRITIQUE) :"
-        if not self.is_camera_available:
+        if not self.is_camera_available or not config.ENABLE_CAMERA:
             hardware_info += "\n- **CAMÉRA NON DISPONIBLE** : Cet appareil n'a pas de caméra fonctionnelle ou son accès est désactivé. Ne fais JAMAIS de commentaires sur l'apparence physique de l'utilisateur, sa posture, ou s'il se ronge les ongles. Ignore toutes les consignes du système liées à l'analyse de la caméra."
         else:
             hardware_info += "\n- **CAMÉRA DISPONIBLE** : Tu as accès à la caméra de l'utilisateur."
 
-        if not self.is_mic_available:
+        if not self.is_mic_available or not config.ENABLE_MICROPHONE:
             hardware_info += "\n- **MICROPHONE NON DISPONIBLE** : Cet appareil n'a pas de microphone fonctionnel ou son accès est désactivé. La transcription vocale est inactive. Ignore toutes les consignes du système liées à la transcription audio."
         else:
             hardware_info += "\n- **MICROPHONE DISPONIBLE** : La transcription vocale (micro) est active."
@@ -447,11 +444,20 @@ Si tu n'as rien de pertinent à signaler, réponds exactement : "Rien de particu
                         continue
                     images = [screen_img]
                     now = time.time()
-                    if self.is_camera_available and (now - self.last_camera_time) >= CAMERA_CAPTURE_INTERVAL:
+                    if config.ENABLE_CAMERA and self.is_camera_available and (now - self.last_camera_time) >= CAMERA_CAPTURE_INTERVAL:
+                        if self._camera is None:
+                            self._init_camera()
                         camera_img = self._capture_camera()
                         if camera_img:
                             images.append(camera_img)
                             self.last_camera_time = now
+                    else:
+                        if self._camera is not None:
+                            try:
+                                self._camera.release()
+                            except Exception:
+                                pass
+                            self._camera = None
                     self._analyze_vision(images)
             except Exception as e:
                 print(f"[Vision] Erreur : {e}")
@@ -512,6 +518,17 @@ Si tu n'as rien de pertinent à signaler, réponds exactement : "Rien de particu
         img.thumbnail(SCREEN_CAPTURE_SIZE, Image.LANCZOS)
         return img
 
+
+    def _init_camera(self):
+        """Initialise la caméra."""
+        try:
+            self._camera = cv2.VideoCapture(0)
+            if not self._camera.isOpened():
+                self._camera = None
+                print("[Caméra] Impossible d'ouvrir le flux vidéo.")
+        except Exception as e:
+            print(f"[Caméra] Erreur init caméra : {e}")
+            self._camera = None
 
     def _capture_camera(self):
         """Capture une image depuis la webcam (instance persistante, pas de fuite mémoire)."""
@@ -709,6 +726,12 @@ Si tu n'as rien de pertinent à signaler, réponds exactement : "Rien de particu
         import sounddevice as sd
         import numpy as np
         
+        # Attendre que le micro soit activé avant de charger Whisper
+        while self.is_running:
+            if config.ENABLE_MICROPHONE and not self.paused:
+                break
+            time.sleep(1)
+
         if self.whisper_model is None:
             try:
                 import whisper
@@ -767,7 +790,7 @@ Si tu n'as rien de pertinent à signaler, réponds exactement : "Rien de particu
             """Capture et transcrit le micro physique en continu."""
             fail_count = 0
             while self.is_running:
-                if self.paused:
+                if not config.ENABLE_MICROPHONE or self.paused:
                     time.sleep(1)
                     continue
                 try:
@@ -858,7 +881,7 @@ Si tu n'as rien de pertinent à signaler, réponds exactement : "Rien de particu
 
             fail_count = 0
             while self.is_running:
-                if self.paused:
+                if not config.ENABLE_MICROPHONE or self.paused:
                     time.sleep(1)
                     continue
                 try:
@@ -1070,8 +1093,107 @@ Si tu n'as rien de pertinent à signaler, réponds exactement : "Rien de particu
         if self.on_suggestion_callback:
             self.on_suggestion_callback(text)
 
-    def get_latest_suggestion(self) -> str:
-        return self.latest_suggestion
-
     def get_memory(self) -> list:
         return list(self.memory)
+
+    def update_prompt_objective(self, new_objective):
+        """Met à jour l'objectif principal et recharge la session de chat."""
+        # 1. Mettre à jour et enregistrer la config
+        config.save_config({"OMI_OBJECTIVE": new_objective})
+        
+        # 2. Reconstruire le system_instruction
+        enhanced_prompt = config.SYSTEM_PROMPT + "\n\n"
+        
+        # Ajout des informations sur la disponibilité du matériel
+        hardware_info = "### DISPONIBILITÉ DU MATÉRIEL (CRITIQUE) :"
+        if not self.is_camera_available or not config.ENABLE_CAMERA:
+            hardware_info += "\n- **CAMÉRA NON DISPONIBLE** : Cet appareil n'a pas de caméra fonctionnelle ou son accès est désactivé. Ne fais JAMAIS de commentaires sur l'apparence physique de l'utilisateur, sa posture, ou s'il se ronge les ongles. Ignore toutes les consignes du système liées à l'analyse de la caméra."
+        else:
+            hardware_info += "\n- **CAMÉRA DISPONIBLE** : Tu as accès à la caméra de l'utilisateur."
+            
+        if not self.is_mic_available or not config.ENABLE_MICROPHONE:
+            hardware_info += "\n- **MICROPHONE NON DISPONIBLE** : Cet appareil n'a pas de microphone fonctionnel ou son accès est désactivé. La transcription vocale est inactive. Ignore toutes les consignes du système liées à la transcription audio."
+        else:
+            hardware_info += "\n- **MICROPHONE DISPONIBLE** : La transcription vocale (micro) est active."
+            
+        enhanced_prompt += hardware_info + "\n\n"
+        
+        if ALLOW_AUTONOMOUS_UI_INTERACTION:
+            enhanced_prompt += """
+TU AS UN ACCÈS INTÉGRAL À CET ORDINATEUR ET TU ES UN AGENT AUTONOME.
+Ton but est d'exécuter les demandes de l'utilisateur de manière RAPIDE et INVISIBLE.
+
+### Hiérarchie des Outils (Priorité absolue) :
+1. **Arrière-plan total** : Utilise `smart_media_control` pour la musique, et `execute_command` pour lancer des apps.
+2. **Interaction UI sans souris** : Utilise TOUJOURS `get_ui_tree()` pour trouver le nom exact de l'élément, puis utilise `click_element_by_name()` ou `background_interact()`. L'analyse d'image est lente et `get_ui_tree()` est instantané.
+3. **Dernier recours (Souris physique)** : Si les étapes 1 et 2 échouent, utilise la Vision (`[UPDATE_SCREEN]`) et `mouse_click` avec les coordonnées de l'arbre UI. Ne devine jamais les coordonnées visuellement.
+"""
+        else:
+            enhanced_prompt += """
+TU ES UN ASSISTANT OBSERVATEUR. Ton rôle est d'aider l'utilisateur par des suggestions.
+### RÈGLE CRITIQUE :
+- INTERDICTION d'utiliser la souris ou le clavier (`mouse_click`, `type_text`, `press_key`, `background_interact`) SAUF si l'utilisateur en fait la demande explicite.
+- Ne tente pas d'interagir avec l'interface graphique de ton propre chef.
+"""
+
+        enhanced_prompt += """
+### Style de réponse (CRITIQUE) :
+- Parle avec des vraies phrases, simples et naturelles.
+- Reste très court (10-15 mots maximum par réponse).
+- Pas de blabla inutile, va droit au but.
+
+### Capacités OS :
+- **Recherche de fichiers** : Utilise `search_files(query)` qui est instantané grâce à l'index Windows. Ne parcours pas le disque manuellement.
+- **iTunes** : Utilise TOUJOURS `control_itunes(command)` pour la musique.
+- **Monitoring** : Utilise `get_system_stats()` pour diagnostiquer des lenteurs (CPU/RAM) et `get_windows_event_logs()` pour les erreurs système.
+- **Processus** : Utilise `list_processes()` pour voir ce qui tourne et `get_process_details(pid)` pour analyser un process suspect.
+- **Fichiers** : Tu peux `read_file` ET `write_file`. Tu es capable de corriger du code ou de créer des scripts.
+- **Presse-papier** : Utilise `get_clipboard()` pour voir ce que l'utilisateur a copié.
+- **Notifications** : Utilise `send_notification(title, message)` pour informer l'utilisateur.
+
+Tu es invisible, rapide, et efficace.
+"""
+
+        initial_profile = get_profile_summary()
+        if initial_profile:
+            enhanced_prompt += f"\n\n{initial_profile}"
+
+        enhanced_prompt += """
+
+### MÉMOIRE LONG TERME (CRITIQUE) :
+Tu avez accès à un profil persistant de l'utilisateur via les outils `get_user_profile` et `update_user_profile`.
+Ce profil survit aux redémarrages — c'est ta mémoire long terme.
+
+**Quand mettre à jour le profil :**
+- Tu apprends le prénom de l'utilisateur → `update_user_profile(section='identity', key='name', value='Prénom')`
+- Tu vois qu'il utilise un langage de programmation → `update_user_profile(section='work', key='tech_stack', items=[...])`
+- Tu observes une mauvaise habitude récurrente → `update_user_profile(section='habits', key='bad_habits', items=[...])`
+- Tu remarques un pattern de travail → `update_user_profile(section='schedule', key='most_productive_hours', items=[...])`
+- Tu veux noter une observation importante → `update_user_profile(section='notes', value='Observation...')`
+
+**Règles :**
+- Ne mets à jour que ce que tu as observé directement, pas ce que tu supposes.
+- Pour les listes (tech_stack, bad_habits, etc.), utilise toujours `items` avec la liste complète à jour.
+- Pour les notes et les champs simples (nom), utilise `value`.
+- Ne demande pas confirmation pour les mises à jour mineures (stack, apps fréquentes).
+- Consulte le profil avec `get_user_profile()` si l'utilisateur te pose une question sur lui-même."""
+
+        self._enhanced_prompt = enhanced_prompt
+        
+        # 3. Mettre à jour la session de chat active
+        try:
+            with self._chat_lock:
+                history = self.chat_session.get_history()
+                clean_history = sanitize_history(history)
+                self.chat_session = self.client.chats.create(
+                    model=GEMINI_MODEL,
+                    config={"system_instruction": self._enhanced_prompt, "tools": TOOLS_LIST},
+                    history=clean_history
+                )
+                self.agent_session = self.chat_session
+            print("[Assistant] Session rechargée avec le nouvel objectif.")
+        except Exception as e:
+            print(f"[Assistant] Erreur lors de la mise à jour de la session de chat : {e}")
+
+    def get_latest_suggestion(self) -> str:
+        return self.latest_suggestion

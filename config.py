@@ -16,7 +16,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # === CAPTURE CAMÉRA ===
 # Active/désactive l'accès à la caméra
-ENABLE_CAMERA = True
+ENABLE_CAMERA = os.getenv("ENABLE_CAMERA", "True").lower() == "true"
 # Intervalle entre chaque capture caméra (en secondes)
 CAMERA_CAPTURE_INTERVAL = 30
 
@@ -25,7 +25,11 @@ CAMERA_CAPTURE_INTERVAL = 30
 AUDIO_SEGMENT_DURATION = 10
 
 # Active/désactive la transcription micro (nécessite whisper)
-ENABLE_MICROPHONE = True
+ENABLE_MICROPHONE = os.getenv("ENABLE_MICROPHONE", "True").lower() == "true"
+
+# === THÈME ===
+# Thème d'OMI : auto (suit le système), light, dark
+THEME = os.getenv("THEME", "auto")
 
 # === COMPORTEMENT IA ===
 # Modèle Gemini à utiliser
@@ -35,25 +39,49 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "models/gemini-3.1-flash-lite")
 
 # Persona et objectif choisis lors de l'installation
 # Modifiable directement dans .env pour changer le comportement d'OMI sans réinstaller
+DEFAULT_OBJECTIVES = {
+    "developer": (
+        "L'utilisateur est développeur. Tu dois surveiller son code en permanence : "
+        "détecter les erreurs, bugs, et mauvaises pratiques dès qu'ils apparaissent à l'écran. "
+        "Propose des corrections concrètes et courtes."
+    ),
+    "student": (
+        "L'utilisateur est étudiant. Ton rôle principal est de l'aider à rester concentré sur ses révisions. "
+        "Si tu le vois sur des réseaux sociaux ou des vidéos non liées à ses études, rappelle-le doucement à l'ordre."
+    ),
+    "creative": (
+        "L'utilisateur est un créatif. Donne-lui des retours constructifs sur ses designs, "
+        "écrits et créations dès qu'ils apparaissent à l'écran."
+    ),
+    "manager": (
+        "L'utilisateur est manager. Aide-le à gérer ses priorités, ses emails et ses tâches de la journée."
+    ),
+    "streamer": (
+        "L'utilisateur est streamer/créateur de contenu. Aide-le à interagir avec sa communauté et surveille ses outils de stream."
+    ),
+    "custom": ""
+}
+
 OMI_PERSONA = os.getenv("OMI_PERSONA", "developer")
-OMI_OBJECTIVE = os.getenv("OMI_OBJECTIVE", "")
+OMI_OBJECTIVE = os.getenv("OMI_OBJECTIVE", "").strip()
+if not OMI_OBJECTIVE:
+    OMI_OBJECTIVE = DEFAULT_OBJECTIVES.get(OMI_PERSONA, "")
 
 # Autoriser l'assistant à utiliser le clavier/souris sans demande explicite
 ALLOW_AUTONOMOUS_UI_INTERACTION = False
 
-# Bloc d'objectif personnalisé (défini lors de l'installation ou dans .env)
-_OBJECTIVE_BLOCK = ""
-if OMI_OBJECTIVE:
-    _OBJECTIVE_BLOCK = f"""
+def build_system_prompt():
+    global OMI_OBJECTIVE
+    obj_block = ""
+    if OMI_OBJECTIVE:
+        obj_block = f"""
 ### OBJECTIF PRINCIPAL (défini par l'utilisateur) :
 {OMI_OBJECTIVE}
 Cet objectif est ta priorité absolue dans toutes tes analyses et suggestions.
 """
-
-# Prompt système : définit la personnalité de l'assistant
-SYSTEM_PROMPT = f"""Tu es OMI, un assistant IA omniscient et proactif.
+    return f"""Tu es OMI, un assistant IA omniscient et proactif.
 Tu observes l'écran de l'utilisateur, tu as accès à sa caméra, et tu as accès à son système de fichiers pour l'aider.
-{_OBJECTIVE_BLOCK}
+{obj_block}
 ### STYLE DE RÉPONSE (OBLIGATOIRE - ULTRA CONCIS) :
 - PHRASES ULTRA COURTES : Utilise une seule phrase (maximum 10-15 mots), simple, naturelle et très directe. Les phrases longues ne s'affichent pas bien dans notre affichage restreint.
 - CONCISION ABSOLUE : Pas de politesse superflue (pas de "Bonjour", "Voici...", "Je te conseille de..."), va droit au but.
@@ -87,6 +115,53 @@ RÈGLES CRITIQUES :
 - Si l'utilisateur cherche un fichier, utilise l'outil de recherche.
 - N'attends pas toujours une question : si tu vois une erreur, une question à résoudre ou une opportunité d'aider, fais une suggestion courte (15 mots max).
 """
+
+SYSTEM_PROMPT = build_system_prompt()
+
+def save_config(updates: dict):
+    """Met à jour les variables d'environnement dans le fichier .env et recharge dotenv."""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    lines = []
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+    updated_keys = set()
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in line:
+            key, val = stripped.split("=", 1)
+            key = key.strip()
+            if key in updates:
+                new_lines.append(f"{key}={updates[key]}\n")
+                updated_keys.add(key)
+                continue
+        new_lines.append(line)
+        
+    for key, val in updates.items():
+        if key not in updated_keys:
+            new_lines.append(f"{key}={val}\n")
+            
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+        
+    # Recharger dotenv pour mettre à jour os.environ
+    load_dotenv(override=True)
+    
+    # Mettre à jour les variables globales de ce module
+    global ENABLE_CAMERA, ENABLE_MICROPHONE, OMI_OBJECTIVE, THEME, SYSTEM_PROMPT
+    if "ENABLE_CAMERA" in updates:
+        ENABLE_CAMERA = str(updates["ENABLE_CAMERA"]).lower() == "true"
+    if "ENABLE_MICROPHONE" in updates:
+        ENABLE_MICROPHONE = str(updates["ENABLE_MICROPHONE"]).lower() == "true"
+    if "OMI_OBJECTIVE" in updates:
+        OMI_OBJECTIVE = updates["OMI_OBJECTIVE"]
+    if "THEME" in updates:
+        THEME = updates["THEME"]
+        
+    SYSTEM_PROMPT = build_system_prompt()
+
 
 # Nombre max de captures stockées en mémoire courte
 MAX_MEMORY_ITEMS = 20
